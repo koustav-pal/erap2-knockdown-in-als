@@ -1,0 +1,469 @@
+---
+title:Microsatellite summary analysis
+output:pdf_document
+---
+
+
+### Main questions
+
+This document contains all of the data required for analysing the AnswerALS data.
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/nemo/lab/patanir/home/users/palk/Projects/0006-phase-condensation-of-repeats-in-neurons/analysis/00-manuscript` and include required packages 
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/nemo/lab/patanir/home/users/palk/Projects/0006-phase-condensation-of-repeats-in-neurons/analysis/00-manuscript/")
+require("HiCBricks")
+require("GenomicRanges")
+require("stringr")
+# require("Biostrings")
+# require("rtracklayer")
+# require("GenomeInfoDb")
+# require("GenomicFeatures")
+require("ggplot2")
+library(rlang)
+library(riskRegression)
+library(survival)
+library(survminer)
+library(pammtools)
+library(gganimate)
+library(transformr)
+library(plotly)
+library(reshape2)
+library(knitr)
+library(rmarkdown)
+
+require("contsurvplot")
+require("RColorBrewer")
+
+```
+
+### 2.0 Include experiment matrix
+
+- Let's first import the counts.
+
+```{r include = FALSE, message = FALSE, warning = FALSE}
+
+analysis_path <- "final-figures/figure-3"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+
+dir.create(save_dir, recursive = T)
+dir.create(plot_dir, recursive = T)
+dir.create(input_dir, recursive = T)
+dir.create(output_dir, recursive = T)
+
+```
+
+### 3.0 Imports
+
+- Load penetrance data
+
+```{r}
+
+nygc_penetrance_list <- readRDS(file.path("final-figures/figure-2/rdata_files/02-save-nygc-rci-expression-summary-with-penetrance-matrix.rds"))
+clinical_metadata_df <- read.csv("0103-NYGC-consortium/input_files/samplesheet.csv")
+nygc_patient_liability_df <- nygc_penetrance_list$liability_df
+nygc_penetrance_matrix <- nygc_penetrance_list$penetrance_matrix
+
+```
+
+### Analysis
+
+
+- Get the genetic group 
+
+```{r}
+
+genetic_test_df <- unique(clinical_metadata_df[,c("external_subject_id", "genetic_test")])
+genetic_test_df$C9orf72_status <- "Unknown"
+genetic_test_df$C9orf72_status[grepl(x = genetic_test_df$genetic_test, pattern = "Positive for C9orf72 Repeat Expansion")] <- "Positive"
+genetic_test_df$C9orf72_status[grepl(x = genetic_test_df$genetic_test, pattern = "Positive for C9orf72 Repeat Expansion") & grepl(x = genetic_test_df$genetic_test, pattern = "conflicts")] <- "Negative"
+genetic_test_df$C9orf72_status[grepl(x = genetic_test_df$genetic_test, pattern = "Negative for C9orf72 Repeat Expansion")] <- "Negative"
+genetic_test_df$C9orf72_status[grepl(x = genetic_test_df$genetic_test, pattern = "Negative for C9orf72 Repeat Expansion") & grepl(x = genetic_test_df$genetic_test, pattern = "conflicts")] <- "Negative"
+
+
+```
+
+
+- Prepare data for brain and spinal cord age at death
+
+
+```{r}
+
+nygc_patient_liability_df$type <- factor(nygc_patient_liability_df$type, levels = c("control", "c9orf72-ALS", "other_mutation-fALS", "sporadic"))
+nygc_patient_liability_df$type_group <- as.character(nygc_patient_liability_df$type)
+nygc_patient_liability_df$type_group[nygc_patient_liability_df$type %in% c("other_mutation-fALS", "sporadic")] <- "sporadic+other_fALS"
+nygc_patient_liability_df$tissue_group <- "spinal_cord"
+nygc_patient_liability_df$tissue_group[nygc_patient_liability_df$tissue %in% c("Cortex", "Cortex_Motor", "Cerebellum")] <- "brain"
+
+patient_surv_df <- do.call(rbind, lapply(split(nygc_patient_liability_df, paste(nygc_patient_liability_df$subject_id, nygc_patient_liability_df$tissue_group)), function(temp_df){
+    message(unique(temp_df$subject_id))
+    data.frame(subject_id = unique(temp_df$subject_id),
+        tissue_group = unique(temp_df$tissue_group),
+        age_at_onset = unique(temp_df$age_at_symptom_onset),
+        age_at_death = unique(temp_df$age_at_death),
+        disease_duration_in_months = unique(temp_df$disease_duration_in_months),
+        sex_genotype = unique(temp_df$sex_genotype),
+        mnd_with_ftd = unique(temp_df$mnd_with_ftd),
+        condition = unique(temp_df$condition),
+        mnd_with_dementia = unique(temp_df$mnd_with_dementia),
+        type_group = unique(temp_df$type_group),
+        rci_liability = mean(temp_df$rci_liability),
+        intron_expression_rate = mean(temp_df$intron_expression_rate))
+}))
+
+patient_surv_df$age_at_death[patient_surv_df$age_at_death == "90 or Older"] <- "90"
+patient_surv_df$age_at_death <- as.numeric(patient_surv_df$age_at_death)
+patient_surv_df$age_at_onset <- as.numeric(patient_surv_df$age_at_onset)
+patient_surv_df$disease_duration <- as.numeric(patient_surv_df$disease_duration_in_months)
+
+patient_surv_df$expansion_status <- genetic_test_df$C9orf72_status[match(patient_surv_df$subject_id, genetic_test_df$external_subject_id)]
+patient_surv_df$expansion_status <- factor(patient_surv_df$expansion_status, levels = c("Unknown", "Positive", "Negative"))
+
+
+```
+
+- Perform cutpoint detection
+
+```{r}
+
+als_surv_df <- patient_surv_df[(patient_surv_df$condition %in% c("als")),]
+als_surv_df$sex_genotype <- factor(als_surv_df$sex_genotype, levels = c("XX", "XY"))
+
+# als_surv_df$condition <- factor(als_surv_df$condition, levels = c("ctrl", "als"))
+als_surv_df$status <- 1
+als_surv_df$status[is.na(als_surv_df$age_at_onset) | is.na(als_surv_df$disease_duration)] <- 0
+
+rci_related_columns <- c("rci_liability", "intron_expression_rate")
+
+spinal_cord_df <- als_surv_df[als_surv_df$tissue_group == "spinal_cord",c("subject_id", "disease_duration", "age_at_onset", "age_at_death", "status", "condition", "expansion_status", rci_related_columns)]
+
+brain_df <- als_surv_df[als_surv_df$tissue_group == "brain",c("subject_id", "disease_duration", "age_at_onset", "age_at_death", "status", "condition", "expansion_status", rci_related_columns)]
+brain_df$condition <- factor(brain_df$condition, levels = c("ctrl", "als"))
+
+```
+
+- Make random survival forests for spinal cord
+
+
+```{r}
+
+require("randomForestSRC")
+require("parallel")
+# generate seeds
+
+seed_file <- file.path(save_dir, "01-seed-file-for-comparing-RFS-survival-curves-between-als-and-control.rds")
+
+if(!file.exists(seed_file)){
+    seed_list <- sample.int(.Machine$integer.max, 1000)    
+    saveRDS(object = seed_list, file = seed_file)
+}else{
+    seed_list <- readRDS(seed_file)
+}
+
+spinal_cord_liability_and_disease_models <- lapply(seed_list, function(x){
+    set.seed(x)
+    message(x)
+    rsf_model <- rfsrc(Surv(disease_duration, status) ~ intron_expression_rate, 
+        data = spinal_cord_df, ntree = 1000, importance = TRUE)
+})  
+
+
+```
+
+- Get risk scores
+
+
+```{r}
+
+
+require("matrixStats")
+
+non_na_spinal_cord_df <- spinal_cord_df[
+    !is.na(spinal_cord_df$age_at_onset) & !is.na(spinal_cord_df$disease_duration), 
+    c("subject_id", "disease_duration", "age_at_onset", "age_at_death", "status", "condition", "expansion_status", rci_related_columns)]
+
+# get predicted risk 
+
+spinal_cord_risk_score_matrix <- do.call(cbind, lapply(spinal_cord_liability_and_disease_models, function(x){
+    message("Done...")
+    rsf_pred <- predict(x, newdata = non_na_spinal_cord_df)
+    rsf_pred$predicted
+}))
+
+
+non_na_spinal_cord_df$risk_score <- rowMedians(spinal_cord_risk_score_matrix)
+median_risk <- median(non_na_spinal_cord_df$risk_score, na.rm = T)
+non_na_spinal_cord_df$risk_group <- ifelse(non_na_spinal_cord_df$risk_score >= median_risk, "high", "low")
+
+differential_survival <- survdiff(Surv(disease_duration, status) ~ risk_group, data = non_na_spinal_cord_df)
+(differential_survival$obs[1] / differential_survival$exp[1]) / (differential_survival$obs[2] / differential_survival$exp[2])
+
+
+```
+
+- Plot survival curves
+
+```{r}
+
+current_theme <- theme(
+    legend.position = "bottom",
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "azure3",
+    linetype = "dashed",
+    size = 0.2))
+
+fit <- survfit(Surv(disease_duration, status) ~ risk_group, data = non_na_spinal_cord_df)
+
+the_plot <- ggsurvplot(fit, 
+    data = non_na_spinal_cord_df,
+    palette = c("#FF5666", "#FFCCC9"),
+    pval = T, pval.method = T,
+    conf.int = F,
+    # surv.median.line = c("v"),
+    risk.table = "absolute",
+    ggtheme = theme_bw() + current_theme)$plot
+the_plot <- the_plot + ggtitle(paste("random forest survival curve for disease duration"))
+
+ggsave(width = 7, height = 7, file = file.path(plot_dir, "09-04-REBUTTAL-plot-random-forest-survival-curve-for-spinal-cord-ALS-disease-duration.pdf"), the_plot)
+
+
+```
+
+- Plot RCI emission rate for risk groups
+
+```{r}
+
+require("ggbeeswarm")
+current_theme <- theme(
+    legend.position = "bottom",
+    text = element_text(size = 10),
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "azure3",
+    linetype = "dashed",
+    size = 0.2))
+
+# Plot the two ROC curves together
+colours <- c("high" = "#FF5666", "low" = "#FFCCC9")
+The_plot <- ggplot(non_na_spinal_cord_df, aes(x = risk_group, y = intron_expression_rate))
+The_plot <- The_plot + geom_boxplot(aes(fill = risk_group), colour = "#000000", 
+    width = 0.1, lwd = 0.5, outlier.shape = NA)
+The_plot <- The_plot + geom_quasirandom(aes(fill = risk_group), shape = 21, colour = "#000000")
+The_plot <- The_plot + scale_x_discrete("Risk group")
+The_plot <- The_plot + scale_y_continuous("RCI emission rate")
+The_plot <- The_plot + scale_fill_manual("Risk group", values = colours)
+The_plot <- The_plot + labs(title = "Age at symptom onset")
+# The_plot <- The_plot + facet_wrap(. ~ tissue_group, scales = "free")
+The_plot <- The_plot + theme_bw() + current_theme
+ggsave(width = 4, height = 7, file = file.path(plot_dir, "09-05-plot-rci-emission-rate-for-high-and-low-risk-groups-in-disease-duration.pdf"), The_plot)
+
+
+wilcox.test(non_na_spinal_cord_df[non_na_spinal_cord_df$risk_group == "high", "intron_expression_rate"],
+    non_na_spinal_cord_df[non_na_spinal_cord_df$risk_group == "low", "intron_expression_rate"])
+
+# data:  non_na_spinal_cord_df[non_na_spinal_cord_df$risk_group == "high", "intron_expression_rate"] and non_na_spinal_cord_df[non_na_spinal_cord_df$risk_group == "low", "intron_expression_rate"]
+# W = 3664, p-value = 0.04085
+# alternative hypothesis: true location shift is not equal to 0
+
+
+# Plot the two ROC curves together
+colours <- c("high" = "#FF5666", "low" = "#FFCCC9")
+The_plot <- ggplot(non_na_spinal_cord_df, aes(x = risk_group, y = age_at_onset))
+The_plot <- The_plot + geom_boxplot(aes(fill = risk_group), colour = "#000000", 
+    width = 0.1, lwd = 0.5, outlier.shape = NA)
+The_plot <- The_plot + geom_quasirandom(aes(fill = risk_group), shape = 21, colour = "#000000")
+The_plot <- The_plot + scale_x_discrete("Risk group")
+The_plot <- The_plot + scale_y_continuous("age at onset")
+The_plot <- The_plot + scale_fill_manual("Risk group", values = colours)
+The_plot <- The_plot + labs(title = "Age at symptom onset")
+# The_plot <- The_plot + facet_wrap(. ~ tissue_group, scales = "free")
+The_plot <- The_plot + theme_bw() + current_theme
+ggsave(width = 4, height = 7, file = file.path(plot_dir, "09-05-plot-age-at-onset-for-high-and-low-risk-groups-in-disease-duration.pdf"), The_plot)
+
+wilcox.test(non_na_spinal_cord_df[non_na_spinal_cord_df$risk_group == "high", "age_at_onset"],
+    non_na_spinal_cord_df[non_na_spinal_cord_df$risk_group == "low", "age_at_onset"])
+
+#         Wilcoxon rank sum test with continuity correction
+
+# data:  non_na_spinal_cord_df[non_na_spinal_cord_df$risk_group == "high", "age_at_onset"] and non_na_spinal_cord_df[non_na_spinal_cord_df$risk_group == "low", "age_at_onset"]
+# W = 3927, p-value = 0.00297
+# alternative hypothesis: true location shift is not equal to 0
+
+
+```
+
+- Make random forest models for brain
+
+```{r}
+
+
+brain_liability_and_disease_models <- lapply(seed_list, function(x){
+    set.seed(x)
+    message(x)
+    rsf_model <- rfsrc(Surv(disease_duration, status) ~ intron_expression_rate, 
+        data = brain_df, ntree = 1000, importance = TRUE)
+})
+
+
+```
+
+- Get risk scores
+
+
+```{r}
+
+
+require("matrixStats")
+
+non_na_brain_df <- brain_df[
+    !is.na(brain_df$age_at_onset) & !is.na(brain_df$disease_duration), 
+    c("subject_id", "disease_duration", "age_at_onset", "age_at_death", "status", "condition", "expansion_status", rci_related_columns)]
+
+# get predicted risk 
+
+brain_risk_score_matrix <- do.call(cbind, lapply(brain_liability_and_disease_models, function(x){
+    message("Done...")
+    rsf_pred <- predict(x, newdata = non_na_brain_df)
+    rsf_pred$predicted
+}))
+
+
+non_na_brain_df$risk_score <- rowMedians(brain_risk_score_matrix)
+median_risk <- median(non_na_brain_df$risk_score, na.rm = T)
+non_na_brain_df$risk_group <- ifelse(non_na_brain_df$risk_score >= median_risk, "high", "low")
+
+differential_survival <- survdiff(Surv(disease_duration, status) ~ risk_group, data = non_na_brain_df)
+(differential_survival$obs[1] / differential_survival$exp[1]) / (differential_survival$obs[2] / differential_survival$exp[2])
+
+
+```
+
+- Plot survival curves
+
+```{r}
+
+current_theme <- theme(
+    legend.position = "bottom",
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "azure3",
+    linetype = "dashed",
+    size = 0.2))
+
+fit <- survfit(Surv(disease_duration, status) ~ risk_group, data = non_na_brain_df)
+
+the_plot <- ggsurvplot(fit, 
+    data = non_na_brain_df,
+    palette = c("#FF5666", "#FFCCC9"),
+    pval = T, pval.method = T,
+    conf.int = F,
+    # surv.median.line = c("v"),
+    risk.table = "absolute",
+    ggtheme = theme_bw() + current_theme)$plot
+the_plot <- the_plot + ggtitle(paste("random forest survival curve for disease duration"))
+
+ggsave(width = 7, height = 7, file = file.path(plot_dir, "09-04-REBUTTAL-plot-random-forest-brain-for-spinal-cord-ALS-disease-duration.pdf"), the_plot)
+
+
+```
+
+- Plot RCI emission rate for risk groups
+
+```{r}
+
+require("ggbeeswarm")
+current_theme <- theme(
+    legend.position = "bottom",
+    text = element_text(size = 10),
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "azure3",
+    linetype = "dashed",
+    size = 0.2))
+
+# Plot the two ROC curves together
+colours <- c("high" = "#FF5666", "low" = "#FFCCC9")
+The_plot <- ggplot(non_na_brain_df, aes(x = risk_group, y = intron_expression_rate))
+The_plot <- The_plot + geom_boxplot(aes(fill = risk_group), colour = "#000000", 
+    width = 0.1, lwd = 0.5, outlier.shape = NA)
+The_plot <- The_plot + geom_quasirandom(aes(fill = risk_group), shape = 21, colour = "#000000")
+The_plot <- The_plot + scale_x_discrete("Risk group")
+The_plot <- The_plot + scale_y_continuous("RCI emission rate")
+The_plot <- The_plot + scale_fill_manual("Risk group", values = colours)
+The_plot <- The_plot + labs(title = "Age at symptom onset")
+# The_plot <- The_plot + facet_wrap(. ~ tissue_group, scales = "free")
+The_plot <- The_plot + theme_bw() + current_theme
+ggsave(width = 4, height = 7, file = file.path(plot_dir, "09-05-plot-rci-emission-rate-for-brain-high-and-low-risk-groups-in-disease-duration.pdf"), The_plot)
+
+
+wilcox.test(non_na_brain_df[non_na_brain_df$risk_group == "high", "intron_expression_rate"],
+    non_na_brain_df[non_na_brain_df$risk_group == "low", "intron_expression_rate"])
+
+# data:  non_na_spinal_cord_df[non_na_spinal_cord_df$risk_group == "high", "intron_expression_rate"] and non_na_spinal_cord_df[non_na_spinal_cord_df$risk_group == "low", "intron_expression_rate"]
+# W = 3664, p-value = 0.04085
+# alternative hypothesis: true location shift is not equal to 0
+
+
+# Plot the two ROC curves together
+colours <- c("high" = "#FF5666", "low" = "#FFCCC9")
+The_plot <- ggplot(non_na_brain_df, aes(x = risk_group, y = age_at_onset))
+The_plot <- The_plot + geom_boxplot(aes(fill = risk_group), colour = "#000000", 
+    width = 0.1, lwd = 0.5, outlier.shape = NA)
+The_plot <- The_plot + geom_quasirandom(aes(fill = risk_group), shape = 21, colour = "#000000")
+The_plot <- The_plot + scale_x_discrete("Risk group")
+The_plot <- The_plot + scale_y_continuous("age at onset")
+The_plot <- The_plot + scale_fill_manual("Risk group", values = colours)
+The_plot <- The_plot + labs(title = "Age at symptom onset")
+# The_plot <- The_plot + facet_wrap(. ~ tissue_group, scales = "free")
+The_plot <- The_plot + theme_bw() + current_theme
+ggsave(width = 4, height = 7, file = file.path(plot_dir, "09-05-plot-age-at-onset-for-brain-high-and-low-risk-groups-in-disease-duration.pdf"), The_plot)
+
+wilcox.test(non_na_spinal_cord_df[non_na_spinal_cord_df$risk_group == "high", "age_at_onset"],
+    non_na_spinal_cord_df[non_na_spinal_cord_df$risk_group == "low", "age_at_onset"])
+
+
+#         Wilcoxon rank sum test with continuity correction
+
+# data:  non_na_spinal_cord_df[non_na_spinal_cord_df$risk_group == "high", "age_at_onset"] and non_na_spinal_cord_df[non_na_spinal_cord_df$risk_group == "low", "age_at_onset"]
+# W = 3927, p-value = 0.00297
+# alternative hypothesis: true location shift is not equal to 0
+
+```
+
+- save all data 
+
+```{r}
+
+non_na_brain_df$tissue_group <- "brain"
+non_na_spinal_cord_df$tissue_group <- "spinal_cord"
+non_na_all_samples_df <- rbind(non_na_brain_df,non_na_spinal_cord_df)
+
+saveRDS(object = non_na_all_samples_df, file = file.path(save_dir, "04-01-save-patients-with-rsf-risk-based-on-disease-duration.rds"))
+
+```

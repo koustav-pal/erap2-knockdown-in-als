@@ -1,0 +1,97 @@
+---
+title:Astrocyte reactivity analysis
+output:pdf_document
+---
+
+
+### Main questions
+
+We want to find the mutation statistics for Ben's samples
+
+### 1.0 Package requirements
+
+- Include required packages 
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+require("stringr")
+require("BSgenome.Hsapiens.UCSC.hg38")
+require("rtracklayer")
+
+```
+
+- change to current working directory `/export2/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis/`.
+
+
+- Set paths
+
+```{r}
+
+setwd("/export2/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis/")
+analysis_path <- "18-screening-for-erap2-mutations-in-postmortem"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+
+dir.create(save_dir)
+dir.create(plot_dir)
+dir.create(input_dir)
+dir.create(output_dir)
+
+```
+
+### 2.0 Include experiment matrix
+
+- Import the list of SNPs and filter for those that are within the ERAP2 gene body
+
+```{r include = FALSE, message = FALSE, warning = FALSE}
+
+mutation_df <- data.table::fread(file.path(input_dir, "GCST90027164_buildGRCh37.tsv"), data.table = F)
+
+mutation_ranges <- GRanges(seqnames = mutation_df$chromosome, 
+    IRanges(start = mutation_df$base_pair_location, end = mutation_df$base_pair_location),
+    name = mutation_df$rsid, ref = mutation_df$effect_allele, alt = mutation_df$other_allele)
+
+chain_object <- import.chain("18-screening-for-erap2-mutations-in-postmortem/input_files/GRCh37_to_GRCh38.chain")
+
+converted_mutation_ranges <- liftOver(mutation_ranges, chain_object)
+converted_mutation_ranges <- unlist(converted_mutation_ranges)
+
+seqlevelsStyle(converted_mutation_ranges) <- "UCSC"
+
+hg38 <- BSgenome.Hsapiens.UCSC.hg38
+all_sequences <- getSeq(hg38, converted_mutation_ranges)
+
+# matches with reference, nothing to be done
+ref_matches_reference <- all_sequences == converted_mutation_ranges$ref
+alt_matches_reference <- all_sequences == converted_mutation_ranges$alt
+
+switch_ref <- converted_mutation_ranges$ref[alt_matches_reference]
+converted_mutation_ranges$ref[alt_matches_reference] <- converted_mutation_ranges$alt[alt_matches_reference]
+converted_mutation_ranges$alt[alt_matches_reference] <- switch_ref
+
+converted_mutation_ranges <- converted_mutation_ranges[ref_matches_reference | alt_matches_reference]
+converted_mutation_ranges$ref <- toupper(converted_mutation_ranges$ref)
+converted_mutation_ranges$alt <- toupper(converted_mutation_ranges$alt)
+
+```
+
+- Fetch all alt alleles
+
+```{r}
+
+    all_mutation_df <- data.frame(
+        chromosome = seqnames(converted_mutation_ranges),
+        pos = start(converted_mutation_ranges),
+        reference = converted_mutation_ranges$ref,
+        alternative = converted_mutation_ranges$alt)
+
+    write.table(x = all_mutation_df, 
+        file = file.path(input_dir, "01-van-rheenen-gwas-mutations-summary-statistics.txt"),
+        sep = "\t",
+        quote = F,
+        col.names = F,
+        row.names = F)
+
+```

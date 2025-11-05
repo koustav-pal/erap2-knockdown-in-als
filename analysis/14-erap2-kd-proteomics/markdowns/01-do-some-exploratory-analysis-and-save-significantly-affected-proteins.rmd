@@ -1,0 +1,490 @@
+---
+title:Gene set enrichment results from ERAP2 KD proteomics
+output:pdf_document
+---
+
+
+### Main questions
+
+We set out to understand the role of hypoxia in astrocytes.
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/nemo/lab/luscomben/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis` and include required packages
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/export2/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis")
+require("stringr")
+require("DESeq2")
+require("PCAtools")
+require("rtracklayer")
+require("stringr")
+require("ggvenn")
+require("cowplot")
+
+```
+
+- Set paths
+
+```{r}
+
+analysis_path <- "14-erap2-kd-proteomics/"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+
+dir.create(save_dir)
+dir.create(plot_dir)
+dir.create(input_dir)
+dir.create(output_dir)
+
+
+```
+
+
+
+### Load annotation file
+
+- Load ensembl annotation gtf
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+require("rtracklayer")
+annotation_gtf <- "/export2/home/koustav/Genomes/ENSEMBL_hg38/Homo_sapiens.GRCh38.104.chr_patch_hapl_scaff.gtf"
+annotation_ranges <- import.gff2(annotation_gtf)
+annotation_gene_ranges <- annotation_ranges[annotation_ranges$type == "gene"]
+
+```
+
+- Load ERAP2 KD proteomics
+
+```{r}
+
+differential_protein_enrichment_list <- readRDS(file.path(save_dir, "02-02-rots-differential-enrichment-analysis-results.rds"))
+unimputed_effect_df <- differential_protein_enrichment_list$unimputed_data
+imputed_effect_df <- do.call(rbind, differential_protein_enrichment_list$minprob_default_imputed_data)
+write.csv(x = imputed_effect_df, file = file.path(output_dir, "imputed_effect_sizes.csv"))
+
+select_differentially_enriched_proteins <- function(data_df, sig){
+    all_diff_proteins <- do.call(rbind, lapply(unique(data_df$comparison), function(x){
+        temp_df <- data_df[data_df$comparison == x,]
+        if(sig == "fdr"){
+            sig_data_df <- temp_df[temp_df[,sig] < 0.05,]
+        }else if (sig == "fdr_prop"){
+            sig_data_df <- temp_df[temp_df[,sig] > 0.3,]
+        }
+        rownames(sig_data_df) <- NULL
+        return(sig_data_df)
+    }))
+    return(all_diff_proteins)
+}
+
+sig_unimputed_effect_df <- select_differentially_enriched_proteins(unimputed_effect_df, sig = "fdr")
+sig_imputed_effect_df <- select_differentially_enriched_proteins(imputed_effect_df, sig = "fdr")
+
+```
+
+- Make venn diagram
+
+
+```{r}
+
+all_proteins <- union(sig_imputed_effect_df$protein_name, sig_unimputed_effect_df$protein_name)
+intersect_df <- data.frame(proteins = all_proteins, 
+    unimputed = all_proteins %in% sig_unimputed_effect_df$protein_name,
+    imputed = all_proteins %in% sig_imputed_effect_df$protein_name)
+
+the_plot <- ggplot(intersect_df, aes(A = `unimputed`, B = `imputed`), 
+        fill_color = c("#7E2E84", "#FAB2EA")) + geom_venn() + theme_void()
+
+save_plot(filename = file.path(plot_dir, "02-04-venn-diagrams-of-imputed-and-unimputed-data.pdf"),
+    plot = the_plot, base_height = 7, base_width = 7)
+
+```
+
+- Plot sparsity distribution comparing the imputed and unimputed data
+
+```{r}
+
+
+unimputed_sparsity_df <- sig_unimputed_effect_df[,c("protein_name", "sparsity")]
+unimputed_sparsity_df$sig_group <- "unimputed"
+imputed_sparsity_df <- sig_imputed_effect_df[,c("protein_name", "sparsity")]
+imputed_sparsity_df$sig_group <- "imputed"
+
+sparsity_df <- rbind(unimputed_sparsity_df, imputed_sparsity_df)
+identify_both <- vapply(split(sparsity_df$sig_group, sparsity_df$protein_name), function(x){
+    length(unique(x)) == 2
+},T)
+
+sparsity_df$sig_group[identify_both[sparsity_df$protein_name]] <- "both"
+
+lapply(split(sparsity_df$sparsity, sparsity_df$sig_group), function(x){
+    quantile(x)
+})
+
+
+sparsity_df$sig_group <- factor(sparsity_df$sig_group, levels = c("unimputed", "imputed", "both"))
+ThePlot <- ggplot(sparsity_df, aes(x = sig_group, y = sparsity))
+ThePlot <- ThePlot + geom_violin(fill = "#EAE6E5", colour = "#000000", lwd = 0.5, alpha = 0.4)
+ThePlot <- ThePlot + geom_boxplot(fill = "#EAE6E5", colour = "#000000", 
+        width = 0.1, lwd = 0.5, alpha = 0.4, outlier.size = NA, outlier.shape = NA)
+ThePlot <- ThePlot + geom_hline(yintercept = 0.5)
+ThePlot <- ThePlot + scale_x_discrete("significance group")
+ThePlot <- ThePlot + scale_y_continuous("sparsity (proportion of missing values)")
+ThePlot <- ThePlot + theme_bw()
+ThePlot <- ThePlot + ggtitle("density distribution of log fold changes")
+# ThePlot <- ThePlot + facet_grid(. ~ comparison, scales = "free")
+# ThePlot <- ThePlot + current_theme
+ggsave(width = 7, height = 7, file = file.path(plot_dir, "02-04-plot-sparsity-distribution-for-each-significance-group.pdf"), ThePlot)
+
+
+```
+
+- The imputed and unimputed data have very considerable overlaps, we consider the union of both
+
+```{r}
+
+
+all_contrasts <- unique(sig_imputed_effect_df$comparison) 
+
+significant_events_df <- do.call(rbind, lapply(all_contrasts, function(x){
+    sig_proteins_in_imputed <- imputed_effect_df[
+        imputed_effect_df$comparison == x & 
+        imputed_effect_df$fdr < 0.05 & 
+        imputed_effect_df$protein_name %in% intersect_df$protein,"protein_name"]
+    sig_proteins_in_unimputed <- unimputed_effect_df[
+        unimputed_effect_df$comparison == x & 
+        unimputed_effect_df$fdr < 0.05 & 
+        unimputed_effect_df$protein_name %in% intersect_df$protein,"protein_name"]
+
+    current_proteins <- union(sig_proteins_in_imputed, sig_proteins_in_unimputed)
+    current_intersect_df <- intersect_df[intersect_df$proteins %in% current_proteins,]
+
+    sig_event_df <- imputed_effect_df[
+        imputed_effect_df$comparison == x & 
+        imputed_effect_df$protein_name %in% current_proteins,]
+    sig_event_df$sig_group <- "imputed"
+
+    select_unimputed <- current_intersect_df$unimputed[match(sig_event_df$protein_name, current_intersect_df$proteins)]
+    select_imputed <- current_intersect_df$imputed[match(sig_event_df$protein_name, current_intersect_df$proteins)]
+
+    sig_event_df$sig_group[select_unimputed] <- "unimputed"
+    sig_event_df$sig_group[select_unimputed & select_imputed] <- "both"
+    return(sig_event_df)
+}))
+rownames(significant_events_df) <- NULL
+
+significant_events_df$direction[significant_events_df$logfc < 0] <- "down"
+significant_events_df$direction[significant_events_df$logfc > 0] <- "up"
+
+saveRDS(object = significant_events_df, file = file.path(save_dir, "02-03-significantly-affected-proteins.rds"))
+
+significant_events_export_df <- significant_events_df[,c(1,2,3,4,7,10,11,12,14)]
+write.csv(significant_events_export_df, file = file.path(output_dir, "significantly-differentially-enriched-proteins-with-rots.csv"))
+
+```
+
+
+- save background set of proteins 
+
+```{r}
+
+
+all_proteins <- unique(imputed_effect_df$protein_name)
+split_de_results <- split(imputed_effect_df, imputed_effect_df$comparison)
+
+protein_effect_df <- do.call(rbind, lapply(all_proteins, function(x){
+    logfc_val <- vapply(split_de_results, function(temp_df){
+        temp_df[temp_df$protein_name == x,"logfc"]
+    },1)
+    fdr_val <- vapply(split_de_results, function(temp_df){
+        temp_df[temp_df$protein_name == x,"fdr"]
+    },1)
+    fdr_prop <- vapply(split_de_results, function(temp_df){
+        temp_df[temp_df$protein_name == x,"fdr_prop"]
+    },1)
+
+    data.frame(protein_name = x, 
+        vcp_ctrl_vs_ctrl_ctrl_logfc = logfc_val["VCP_CTRL_vs_CTRL_CTRL"],
+        vcp_ctrl_vs_ctrl_ctrl_sig = ifelse("VCP_CTRL_vs_CTRL_CTRL" %in% significant_events_df$comparison[match(x, significant_events_df$protein_name)], T, F),
+        vcp_erap2_vs_ctrl_erap2_logfc = logfc_val["VCP_ERAP2_vs_CTRL_ERAP2"],
+        vcp_erap2_vs_ctrl_erap2_sig = ifelse("VCP_ERAP2_vs_CTRL_ERAP2" %in% significant_events_df$comparison[match(x, significant_events_df$protein_name)], T, F),
+        vcp_erap2_vs_vcp_ctrl_logfc = logfc_val["VCP_ERAP2_vs_VCP_CTRL"],
+        vcp_erap2_vs_vcp_ctrl_sig = ifelse("VCP_ERAP2_vs_VCP_CTRL" %in% significant_events_df$comparison[match(x, significant_events_df$protein_name)], T, F),
+        ctrl_erap2_vs_ctrl_ctrl_logfc = logfc_val["CTRL_ERAP2_vs_CTRL_CTRL"],
+        ctrl_erap2_vs_ctrl_ctrl_sig = ifelse("CTRL_ERAP2_vs_CTRL_CTRL" %in% significant_events_df$comparison[match(x, significant_events_df$protein_name)], T, F))
+}))
+rownames(protein_effect_df) <- NULL
+protein_effect_df$vcp_ctrl_vs_ctrl_ctrl_sig[is.na(protein_effect_df$vcp_ctrl_vs_ctrl_ctrl_sig)] <- F
+protein_effect_df$vcp_erap2_vs_ctrl_erap2_sig[is.na(protein_effect_df$vcp_erap2_vs_ctrl_erap2_sig)] <- F
+protein_effect_df$vcp_erap2_vs_vcp_ctrl_sig[is.na(protein_effect_df$vcp_erap2_vs_vcp_ctrl_sig)] <- F
+protein_effect_df$ctrl_erap2_vs_ctrl_ctrl_sig[is.na(protein_effect_df$ctrl_erap2_vs_ctrl_ctrl_sig)] <- F
+write.csv(x = protein_effect_df, file = file.path(output_dir, "04-background-protein-logfc-values.csv"))
+
+```
+
+
+
+
+- Plot log fold change of significantly affected genes
+
+```{r}
+
+
+plot_q_df <- as.data.frame(quantile(significant_events_df$logfc, c(0.1, 0.25, 0.5, 0.75, 0.9)))
+plot_q_df$quantile <- rownames(plot_q_df)
+colnames(plot_q_df) <- c("logfc", "quantile")
+
+dens_dist <- density(significant_events_df$logfc)
+plot_q_df$yaxis <- vapply(plot_q_df$logfc, function(x){
+    dens_dist$y[max(which(round(dens_dist$x,2) == round(x,2)))]
+},1)
+plot_q_df$label <- paste(plot_q_df$quantile, round(2^(plot_q_df$logfc),2), sep = ":")
+
+#           logfc quantile     yaxis    label
+# 10% -0.36620188      10% 1.7882933 10%:0.78
+# 25% -0.30733347      25% 3.7275212 25%:0.81
+# 50% -0.25327538      50% 4.0196775 50%:0.84
+# 75% -0.17844485      75% 2.5070673 75%:0.88
+# 90% -0.06808893      90% 0.6248176 90%:0.95
+
+ThePlot <- ggplot(significant_events_df, aes(x = logfc))
+ThePlot <- ThePlot + geom_density(fill = "azure3", colour = "#000000")
+ThePlot <- ThePlot + geom_vline(data = plot_q_df, aes(xintercept = logfc), colour = "#000000", lty = "dashed")
+ThePlot <- ThePlot + geom_label(data = plot_q_df, aes(x = logfc, y = yaxis, label = label), colour = "#000000")
+ThePlot <- ThePlot + scale_x_continuous("log2 fold change")
+ThePlot <- ThePlot + scale_y_continuous("density")
+ThePlot <- ThePlot + theme_bw()
+ThePlot <- ThePlot + ggtitle("density distribution of log fold changes")
+# ThePlot <- ThePlot + facet_grid(. ~ comparison, scales = "free")
+ThePlot <- ThePlot + current_theme
+ggsave(width = 7, height = 7, file = file.path(plot_dir, "02-05-plot-density-plot-of-log-foldchanges.pdf"), ThePlot)
+
+```
+
+
+- Plot frequency of differential expression
+
+```{r}
+
+frequency_df <- as.data.frame(table(significant_events_df$comparison, significant_events_df$direction))
+colnames(frequency_df) <- c("comparison", "direction", "frequency")
+frequency_df <- frequency_df[!(frequency_df$comparison %in% c("VCP_ERAP2_vs_CTRL_ERAP2")),]
+frequency_df$comparison <- factor(frequency_df$comparison, levels = c("VCP_CTRL_vs_CTRL_CTRL", "CTRL_ERAP2_vs_CTRL_CTRL", "VCP_ERAP2_vs_VCP_CTRL"))
+prop_df <- do.call(rbind, lapply(split(frequency_df, frequency_df$comparison), function(x){
+    x <- x[rev(order(x$direction)),]
+    x$prop <- x$frequency / sum(x$frequency)
+    x$lab_y <-  cumsum(x$prop) - (0.5 * x$prop)
+    return(x)
+}))
+
+```
+
+- Plot frequency plots
+
+```{r}
+
+require("ggplot2")
+
+my_theme <- theme(legend.position = "bottom",
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 8, hjust = 1, angle = 45),
+    axis.text.y = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "azure3",
+    linetype = "dashed", size = 0.2))
+
+Colours <- c("up" = "#D81E5B", "down" = "#3993DD")
+the_plot <- ggplot(prop_df, aes(x = comparison, y = prop))
+the_plot <- the_plot + geom_col(aes(fill = direction), colour = "#000000")
+the_plot <- the_plot + geom_text(data = prop_df, aes(x = comparison, y = lab_y, label = frequency), colour = "#000000")
+the_plot <- the_plot + scale_x_discrete("comparisons")
+the_plot <- the_plot + scale_y_continuous("log10 frequency of differential expression")
+the_plot <- the_plot + scale_fill_manual("lfc direction", values = Colours)
+the_plot <- the_plot + theme_bw()
+the_plot <- the_plot + my_theme
+ggsave(the_plot, file = file.path(plot_dir, "02-06-frequency-of-differential-protein-enrichment.pdf"), height = 9, width = 3)
+
+```
+
+
+### Plot volcano plots
+
+- Plot volcano without thresholding on log foldchange
+
+```{r}
+
+imputed_effect_df$direction[imputed_effect_df$logfc < 0 ] <- "down"
+imputed_effect_df$direction[imputed_effect_df$logfc > 0 ] <- "up"
+
+imputed_effect_df$fdr[imputed_effect_df$fdr == 0] <- 0.001
+imputed_effect_df$log_fdr <- -log10(imputed_effect_df$fdr)
+imputed_effect_df$log_pvalue <- -log10(imputed_effect_df$pvalue)
+
+
+significant_events_df$fdr[significant_events_df$fdr == 0] <- 0.001
+significant_events_df$log_fdr <- -log10(significant_events_df$fdr)
+significant_events_df$log_pvalue <- -log10(significant_events_df$pvalue)
+
+direction_colours <- c("down" = "#009FB7", "up" = "#FF6978")
+sig_colours <- c("imputed" = "#FAB2EA", "unimputed" = "#7E2E84", "both" = "#EE6C4D")
+
+
+current_theme <- theme(
+    legend.position = "bottom",
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "azure3",
+    linetype = "dashed",
+    size = 0.2))
+
+ThePlot <- ggplot(imputed_effect_df[imputed_effect_df$comparison %in% c("VCP_CTRL_vs_CTRL_CTRL", "VCP_ERAP2_vs_CTRL_ERAP2"),], 
+    aes(x = logfc, y = log_pvalue))
+ThePlot <- ThePlot + geom_point(fill = "azure3", colour = "#000000", shape = 21, alpha = 0.6)
+ThePlot <- ThePlot + geom_point(data = significant_events_df[significant_events_df$comparison %in% c("VCP_CTRL_vs_CTRL_CTRL", "VCP_ERAP2_vs_CTRL_ERAP2"),], 
+    aes(fill = sig_group), colour = "#000000", shape = 21)
+ThePlot <- ThePlot + geom_vline(xintercept = 0, colour = "#000000", lty = "dashed")
+ThePlot <- ThePlot + geom_hline(yintercept = -log10(0.05), colour = "#000000", lty = "dashed")
+ThePlot <- ThePlot + scale_x_continuous("log2 fold change")
+ThePlot <- ThePlot + scale_y_continuous("-log10(pvalue)")
+ThePlot <- ThePlot + scale_fill_manual("significance group", values = sig_colours)
+ThePlot <- ThePlot + theme_bw()
+ThePlot <- ThePlot + ggtitle("volcano plot of comparisons")
+ThePlot <- ThePlot + facet_grid(. ~ comparison, scales = "free")
+ThePlot <- ThePlot + current_theme
+ggsave(width = 10, height = 7, file = file.path(plot_dir, "02-07-plot-volcano-plot-of-comparisons.pdf"), ThePlot)
+
+
+```
+
+- Plot ALS vs control effect versus erap2 KD in ALS effect
+
+```{r}
+
+all_proteins <- unique(imputed_effect_df$protein_name)
+split_de_results <- split(imputed_effect_df, imputed_effect_df$comparison)
+
+protein_effect_df <- do.call(rbind, lapply(all_proteins, function(x){
+    logfc_val <- vapply(split_de_results, function(temp_df){
+        temp_df[temp_df$protein_name == x,"logfc"]
+    },1)
+    fdr_val <- vapply(split_de_results, function(temp_df){
+        temp_df[temp_df$protein_name == x,"fdr"]
+    },1)
+    fdr_prop <- vapply(split_de_results, function(temp_df){
+        temp_df[temp_df$protein_name == x,"fdr_prop"]
+    },1)
+
+    data.frame(protein_name = x, 
+        vcp_ctrl_vs_ctrl_ctrl_logfc = logfc_val["VCP_CTRL_vs_CTRL_CTRL"],
+        vcp_ctrl_vs_ctrl_ctrl_sig = ifelse("VCP_CTRL_vs_CTRL_CTRL" %in% significant_events_df$comparison[match(x, significant_events_df$protein_name)], T, F),
+        vcp_erap2_vs_ctrl_erap2_logfc = logfc_val["VCP_ERAP2_vs_CTRL_ERAP2"],
+        vcp_erap2_vs_ctrl_erap2_sig = ifelse("VCP_ERAP2_vs_CTRL_ERAP2" %in% significant_events_df$comparison[match(x, significant_events_df$protein_name)], T, F),
+        vcp_erap2_vs_vcp_ctrl_logfc = logfc_val["VCP_ERAP2_vs_VCP_CTRL"],
+        vcp_erap2_vs_vcp_ctrl_sig = ifelse("VCP_ERAP2_vs_VCP_CTRL" %in% significant_events_df$comparison[match(x, significant_events_df$protein_name)], T, F),
+        ctrl_erap2_vs_ctrl_ctrl_logfc = logfc_val["CTRL_ERAP2_vs_CTRL_CTRL"],
+        ctrl_erap2_vs_ctrl_ctrl_sig = ifelse("CTRL_ERAP2_vs_CTRL_CTRL" %in% significant_events_df$comparison[match(x, significant_events_df$protein_name)], T, F))
+}))
+rownames(protein_effect_df) <- NULL
+protein_effect_df$vcp_ctrl_vs_ctrl_ctrl_sig[is.na(protein_effect_df$vcp_ctrl_vs_ctrl_ctrl_sig)] <- F
+protein_effect_df$vcp_erap2_vs_ctrl_erap2_sig[is.na(protein_effect_df$vcp_erap2_vs_ctrl_erap2_sig)] <- F
+protein_effect_df$vcp_erap2_vs_vcp_ctrl_sig[is.na(protein_effect_df$vcp_erap2_vs_vcp_ctrl_sig)] <- F
+protein_effect_df$ctrl_erap2_vs_ctrl_ctrl_sig[is.na(protein_effect_df$ctrl_erap2_vs_ctrl_ctrl_sig)] <- F
+
+
+proteins_in_both_imputed_unimputed_df <- protein_effect_df[
+    protein_effect_df$protein_name %in% sig_unimputed_effect_df$protein_name & 
+    protein_effect_df$protein_name %in% sig_imputed_effect_df$protein_name,]
+proteins_detected_in_unimputed_data <- protein_effect_df[protein_effect_df$protein_name %in% sig_unimputed_effect_df$protein_name & 
+    !(protein_effect_df$protein_name %in% proteins_in_both_imputed_unimputed_df$protein_name),]
+proteins_detected_in_imputed_data <- protein_effect_df[protein_effect_df$protein_name %in% sig_imputed_effect_df$protein_name &
+    !(protein_effect_df$protein_name %in% proteins_in_both_imputed_unimputed_df$protein_name),]
+
+proteins_in_both_imputed_unimputed_df$sig_group <- "both"
+proteins_detected_in_unimputed_data$sig_group <- "unimputed"
+proteins_detected_in_imputed_data$sig_group <- "imputed"
+
+significantly_affected_genes_df <- rbind(proteins_in_both_imputed_unimputed_df, proteins_detected_in_unimputed_data, proteins_detected_in_imputed_data)
+
+table(significantly_affected_genes_df$sig_group)
+     # both   imputed unimputed
+     #  457       366       369
+
+
+
+```
+
+- Plot ALS vs control log fold change vs erap2 kd in ALS log fold change
+
+```{r}
+
+plot_significantly_affected_genes_df <- significantly_affected_genes_df[significantly_affected_genes_df$vcp_ctrl_vs_ctrl_ctrl_sig,]
+
+ThePlot <- ggplot(protein_effect_df[!(protein_effect_df$protein_name %in% plot_significantly_affected_genes_df$protein_name),], 
+    aes(x = vcp_ctrl_vs_ctrl_ctrl_logfc, y = vcp_erap2_vs_vcp_ctrl_logfc))
+ThePlot <- ThePlot + geom_point(fill = "#FDFFFC", colour = "#000000", shape = 21)
+ThePlot <- ThePlot + geom_point(data = plot_significantly_affected_genes_df, 
+    aes(x = vcp_ctrl_vs_ctrl_ctrl_logfc, y = vcp_erap2_vs_vcp_ctrl_logfc, fill = sig_group),
+     colour = "#000000", shape = 21, size = 1.5)
+# ThePlot <- ThePlot + geom_boxplot(fill = "#E2E2E2", colour = "#000000", 
+#     width = 0.1, lwd = 0.5, position = position_dodge(width = 0.9), outlier.shape = NA)
+ThePlot <- ThePlot + geom_hline(yintercept = 0, linetype = "dashed")
+ThePlot <- ThePlot + geom_vline(xintercept = 0, linetype = "dashed")
+ThePlot <- ThePlot + scale_x_continuous("VCP vs Control effect")
+ThePlot <- ThePlot + scale_y_continuous("Effect of ERAP2 KD in VCP")
+ThePlot <- ThePlot + scale_fill_manual("significance group", values = sig_colours)
+ThePlot <- ThePlot + theme_bw()
+ThePlot <- ThePlot + ggtitle("VCP vs Control effect versus ERAP2 KD in VCP")
+# ThePlot <- ThePlot + facet_grid(. ~ sig_group, scales = "free")
+ThePlot <- ThePlot + theme(
+    legend.position = "bottom",
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "azure3",
+    linetype = "dashed",
+    size = 0.2))
+ggsave(width = 10, height = 10, file = file.path(plot_dir, "02-08-plot-vcp-vs-control-versus-effect-of-erap2-kd-in-vcp.pdf"), ThePlot)
+
+
+```
+
+
+- Get set of differentially enriched proteins affected by ERAP2 KD 
+
+```{r}
+
+significantly_affected_genes_df$direction_group <- "None"
+significantly_affected_genes_df$direction_group[
+    significantly_affected_genes_df$vcp_ctrl_vs_ctrl_ctrl_logfc < 0 & 
+    significantly_affected_genes_df$vcp_erap2_vs_vcp_ctrl_logfc > 0] <- "down->up"
+significantly_affected_genes_df$direction_group[
+    significantly_affected_genes_df$vcp_ctrl_vs_ctrl_ctrl_logfc > 0 & 
+    significantly_affected_genes_df$vcp_erap2_vs_vcp_ctrl_logfc < 0] <- "up->down"
+significantly_affected_genes_df$direction_group[
+    significantly_affected_genes_df$vcp_ctrl_vs_ctrl_ctrl_logfc > 0 & 
+    significantly_affected_genes_df$vcp_erap2_vs_vcp_ctrl_logfc > 0] <- "up->up"
+significantly_affected_genes_df$direction_group[
+    significantly_affected_genes_df$vcp_ctrl_vs_ctrl_ctrl_logfc < 0 & 
+    significantly_affected_genes_df$vcp_erap2_vs_vcp_ctrl_logfc < 0] <- "down->down"
+
+saveRDS(object = significantly_affected_genes_df, file = file.path(save_dir, "02-04-pairwise-grouped-significantly-affected-proteins.rds"))
+
+```
+

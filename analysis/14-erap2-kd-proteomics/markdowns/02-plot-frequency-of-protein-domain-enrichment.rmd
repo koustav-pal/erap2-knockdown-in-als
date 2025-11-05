@@ -1,0 +1,291 @@
+---
+title:Gene set enrichment results from ERAP2 KD proteomics
+output:pdf_document
+---
+
+
+### Main questions
+
+We set out to understand the role of hypoxia in astrocytes.
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/nemo/lab/luscomben/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis` and include required packages
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/nemo/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis")
+require("stringr")
+require("DESeq2")
+require("PCAtools")
+require("rtracklayer")
+require("stringr")
+require("biomaRt")
+
+```
+
+- Set paths
+
+```{r}
+
+
+analysis_path <- "14-erap2-kd-proteomics/"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+
+dir.create(save_dir)
+dir.create(plot_dir)
+dir.create(input_dir)
+dir.create(output_dir)
+
+
+```
+
+
+
+### Load annotation file
+
+- Get significantly differentially expressed proteins 
+
+```{r}
+
+differential_protein_enrichment_df <- readRDS(file.path(save_dir, "02-rots-differential-enrichment-analysis-results.rds"))
+significant_differentially_enriched_proteins_df <- do.call(rbind, lapply(differential_protein_enrichment_df, function(temp_df){
+    temp_df[temp_df$fdr_prop >= 0.3,]
+}))
+rownames(significant_differentially_enriched_proteins_df) <- NULL
+
+keep_proteins_df <- significant_differentially_enriched_proteins_df[significant_differentially_enriched_proteins_df$comparison %in% c("VCP_CTRL_vs_CTRL_CTRL", "VCP_ERAP2_vs_CTRL_ERAP2"),]
+keep_proteins_df$direction <- ifelse(keep_proteins_df$logfc < 0, "down", "up")
+
+
+```
+- Get uniprot ids from biomart
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+search_names <- unique(keep_proteins_df$protein_name)
+
+protein_ids_df <- biomaRt::getBM(attributes = c("ensembl_gene_id", "description", "hgnc_symbol", "gene_biotype"),#,"entrezgene" 
+                                filters = "hgnc_symbol", 
+                                values = search_names, 
+                                mart = ensembl)
+
+get_fields <- c("uniprotswissprot", "interpro", "ncbifam", "pfscan", "pfam", "smart", "cdd", 
+    "gene3d", "superfamily", "hamap", "chembl")
+
+all_protein_data_list <- lapply(get_fields, function(x){
+    message(x)
+    return_df <- biomaRt::getBM(
+        attributes = c("hgnc_symbol", x),#,"entrezgene" 
+        filters = "hgnc_symbol", 
+        values = search_names, 
+        mart = ensembl)
+})
+
+protein_data_df <- do.call(rbind, lapply(search_names, function(x){
+    return_df <- protein_ids_df[protein_ids_df$hgnc_symbol == x,]
+    a_list <- list()
+    field_list <- lapply(seq_along(get_fields), function(y){
+        current_df <- all_protein_data_list[[y]]
+        return(current_df[current_df$hgnc_symbol == x & current_df[,2] != "",2])
+    })
+    rep_fields <- rep(get_fields, times = vapply(field_list, length,1))
+    return_df$db <- CharacterList(rep_fields)
+    return_df$db_value <- CharacterList(do.call(c, field_list))
+    return(return_df)
+}))
+
+
+
+```
+
+- Make rest calls to interpro and fetch information
+
+```{r}
+
+require("httr")
+require("jsonlite")
+
+unique_interpro_ids <- unique(protein_ids_df$interpro)
+
+main_url <- "https://www.ebi.ac.uk/interpro"
+endpoints <- c(
+    "entry" = "api/entry",
+    "protein" = "api/protein",
+    "structure" = "api/structure",
+    "set" = "api/set",
+    "taxonomy" = "api/taxonomy",
+    "proteome" = "api/proteome")
+
+db_reference <- c("uniprotswissprot" = "uniprot", 
+    "interpro" = "interpro", 
+    "ncbifam" = "ncbifam", 
+    "pfscan" = "profile", 
+    "pfam" = "pfam", 
+    "smart" = "smart", 
+    "cdd" = "cdd", 
+    "gene3d" = "cathgene3d", 
+    "superfamily" = "ssf", 
+    "hamap" = "hamap", 
+    "chembl" = "chembl")
+
+entry_list <- list()
+for (i in seq_len(nrow(protein_data_df))) {
+    temp_df <- protein_data_df[i,]
+    message(temp_df$hgnc_symbol)
+    dbs <- temp_df$db[[1]]
+    db_values <- temp_df$db_value[[1]]
+
+    db_values <- db_values[dbs != "chembl"]
+    dbs <- dbs[dbs != "chembl"]
+    if(any(db_values %in% names(entry_list))){
+        a_filter <- !(db_values %in% names(entry_list))
+        db_values <- db_values[a_filter]
+        dbs <- dbs[a_filter]
+    }
+
+    return_list <- lapply(db_values, function(x){
+        message(x)
+        current_db <- dbs[db_values == x]
+        if(current_db == "uniprotswissprot"){
+            current_path <- file.path(main_url, endpoints["protein"], db_reference[current_db], x)
+        }else{
+            if(current_db == "gene3d"){
+                current_id <- paste("G3DSA", x, sep = ":")
+            }else{
+                current_id <- x
+            }
+            current_path <- file.path(main_url, endpoints["entry"], db_reference[current_db], current_id)    
+        }
+        status_code = 404
+        while(status_code != 200){
+            get_details <- GET(current_path)
+            status_code <- status_code(get_details)
+            get_text <- content(get_details, "text", encoding = "UTF-8")
+            get_list <- fromJSON(get_text, flatten = TRUE)
+        }
+        return(list(db = current_db, metadata = do.call(c, get_list)))
+    })
+    names(return_list) <- db_values
+    entry_list <- c(entry_list, return_list)
+}
+
+require("parallel")
+formatted_entry_list <- mclapply(names(entry_list), function(x){
+    message(x)
+    gene_list <- do.call(c, lapply(seq_len(nrow(protein_data_df)), function(y){
+        temp_df <- protein_data_df[y,]
+        db_values <- temp_df$db_value[[1]]
+        if(x %in% db_values){
+            return(temp_df$hgnc_symbol)
+        }else{
+            return(NULL)
+        }
+    }))
+    return(list(members = gene_list, db = entry_list[[x]]$db, metadata = entry_list[[x]]$metadata))
+}, mc.cores = 6)
+names(formatted_entry_list) <- names(entry_list)
+
+
+saveRDS(object = formatted_entry_list, file = file.path(save_dir, "05-all-interpro-metadata-entry-list.rds"))
+
+
+```
+
+- Find proteins which have a lot of domains
+
+```{r}
+
+length_of_domains <- vapply(formatted_entry_list, function(x){
+    length(x$members)
+},1)
+
+domain_frequency_df <- do.call(rbind, lapply(formatted_entry_list, function(x){
+    message(x$db)
+    name <- x$metadata$metadata.name
+    if(class(name) == "list"){
+        name <- name$name
+    }
+    if(is.null(name)){
+        name <- "Undefined"
+    }
+    data.frame(db = x$db, name = name, n_members = length(x$members))
+}))
+
+```
+
+- Plot domain frequency for interpro signatures
+
+
+```{r}
+
+
+lapply(unique(domain_frequency_df$db), function(a_db){
+    boo <- domain_frequency_df[domain_frequency_df$db == a_db & domain_frequency_df$n_members > 1,]
+    head(boo[order(boo$n_members, decreasing = T),], 10)
+})
+interpro_df <- domain_frequency_df[domain_frequency_df$db == "interpro",]
+plot_df <- interpro_df[order(interpro_df$n_members, decreasing = T),][1:20,]
+
+plot_df$name <- factor(plot_df$name, levels = plot_df$name[order(plot_df$n_members, decreasing = F)])
+
+ThePlot <- ggplot(plot_df, aes(x = n_members, y = name))
+ThePlot <- ThePlot + geom_point(fill = "#FF4242", colour = "#000000")
+# ThePlot <- ThePlot + geom_boxplot(fill = "#E2E2E2", colour = "#000000", 
+#     width = 0.1, lwd = 0.5, position = position_dodge(width = 0.9), outlier.shape = NA)
+ThePlot <- ThePlot + scale_x_continuous("number of proteins containing signature")
+ThePlot <- ThePlot + scale_y_discrete("domain signature")
+ThePlot <- ThePlot + theme_bw()
+ThePlot <- ThePlot + ggtitle("Interpro domain signature frequency")
+# ThePlot <- ThePlot + facet_grid(metadata ~ ., scales = "free")
+ThePlot <- ThePlot + theme(
+    legend.position = "bottom",
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "azure3",
+    linetype = "dashed",
+    size = 0.2))
+ggsave(width = 10, height = 10, file = file.path(plot_dir, "08-01-plot-number-of-proteins-containing-domain-signature.pdf"), ThePlot)
+
+
+# interpro_df <- domain_frequency_df[domain_frequency_df$db == "interpro",]
+# plot_df <- interpro_df[order(interpro_df$n_members, decreasing = T),][1:20,]
+
+# plot_df$name <- factor(plot_df$name, levels = plot_df$name[order(plot_df$n_members, decreasing = F)])
+
+
+# ThePlot <- ggplot(plot_df, aes(x = n_members, y = name))
+# ThePlot <- ThePlot + geom_point(fill = "#FF4242", colour = "#000000")
+# # ThePlot <- ThePlot + geom_boxplot(fill = "#E2E2E2", colour = "#000000", 
+# #     width = 0.1, lwd = 0.5, position = position_dodge(width = 0.9), outlier.shape = NA)
+# ThePlot <- ThePlot + scale_x_continuous("number of proteins containing signature")
+# ThePlot <- ThePlot + scale_y_discrete("domain signature")
+# ThePlot <- ThePlot + theme_bw()
+# ThePlot <- ThePlot + ggtitle("Interpro domain signature frequency")
+# # ThePlot <- ThePlot + facet_grid(metadata ~ ., scales = "free")
+# ThePlot <- ThePlot + theme(
+#     legend.position = "bottom",
+#     text = element_text(size = 12),
+#     axis.text.x = element_text(size = 12),
+#     axis.text.y = element_text(size = 12),
+#     legend.text = element_text(size = 10),
+#     legend.title = element_text(size = 10),
+#     plot.background = element_blank(),
+#     panel.grid.minor = element_blank(),
+#     panel.grid.major = element_line(colour = "azure3",
+#     linetype = "dashed",
+#     size = 0.2))
+# ggsave(width = 10, height = 10, file = file.path(plot_dir, "08-02-plot-number-of-proteins-containing-domain-signature.pdf"), ThePlot)
+
+
+```

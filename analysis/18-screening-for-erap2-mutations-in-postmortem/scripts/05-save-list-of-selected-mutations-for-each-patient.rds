@@ -1,0 +1,143 @@
+data_dir <- normalizePath("/export2/home/koustav/")
+project_dir <- file.path(data_dir, "Projects", "012-Ben-Clarke-ERAP1-KD")
+Sys.setenv(R_REMOTES_NO_ERRORS_FROM_WARNINGS = "true")
+# save_dir <- file.path(project_dir, "rdata_files")
+sampleinfo_dir <- file.path(project_dir, "sampleinfo")
+analysis_dir <- file.path(project_dir, "analysis", "18-screening-for-erap2-mutations-in-postmortem/")
+setwd(analysis_dir)
+analysis_save_dir <- file.path(analysis_dir, "rdata_files")
+analysis_input_dir <- file.path(analysis_dir, "input_files")
+analysis_output_dir <- file.path(analysis_dir, "output_files")
+analysis_plots_dir <- file.path(analysis_dir, "plots")
+temp_dir <- file.path(analysis_dir, "tmp")
+tmp_dir <- file.path(analysis_dir, "slurm")
+genic_count_list <- readRDS(file.path("../11-postmortem-data-analysis/rdata_files/01-gene-level-counts-of-postmortem-samples.rds"))
+mutation_screening_results <- file.path(analysis_output_dir, "FILTERED_MUTATION_SCREENING_RESULTS.vcf")
+# ==========================================================================
+# Packages
+# ==========================================================================
+require("BSgenome.Hsapiens.UCSC.hg38")
+require("stringr")
+source("scripts/src/source.R")
+# ==========================================================================
+# Analysis
+# ==========================================================================
+mutation_df <- data.table::fread(file.path(analysis_input_dir, "snp_result.txt"), data.table = F)
+erap2_location_df <- data.frame(chr = 5, start = 96875984, end = 96919716)
+mutation_df <- mutation_df[mutation_df$pos >= erap2_location_df$start & mutation_df$pos <= erap2_location_df$end,]
+
+hg38 <- BSgenome.Hsapiens.UCSC.hg38
+all_mutation_df <- do.call(rbind, lapply(seq_len(nrow(mutation_df)), function(x){
+    message(x)
+    all_alleles <- str_split(string = mutation_df$variation[x], 
+        pattern = ">", simplify = T)
+    ref_allele <- all_alleles[1,1]
+    alt_alleles <- all_alleles[1,2]
+    if(grepl(x = all_alleles[1,2], pattern = ",")){
+        alt_alleles <- str_split(string = all_alleles[1,2], 
+        pattern = ",", simplify = T)[1,]
+    }
+    return_mutation_df <- data.frame(chromosome = mapSeqlevels(paste("chr",mutation_df[x,"#chr"], sep = ""), "ENSEMBL"), 
+        pos = mutation_df[x,"pos"],
+        reference = ref_allele, 
+        alternative = alt_alleles,
+        name = mutation_df[x,"snp_id"])
+    return(return_mutation_df)
+}))
+
+coldata_df <- genic_count_list$coldata
+mutation_screening_df <- data.table::fread(file = "tmp/ALL_MUTATION_SCREENING_RESULTS.txt", header = T, fill = T, data.table = F)
+
+coldata_df$sample_row <- seq_len(nrow(coldata_df))
+coldata_df$sample_name <- paste(coldata_df$condition, coldata_df$sample_row, sep = "_")
+
+coldata_df$tissue_group <- "spinal_cord"
+coldata_df$tissue_group[coldata_df$tissue %in% c("Cortex", "Cortex_Motor", "Cerebellum")] <- "brain"
+
+
+columns <- c(reference_fwd = "reff", reference_rev = "refv", alternate_fwd = "altf", alternate_rev = "altv")
+mutation_screening_df$snp_id <- all_mutation_df$name[match(
+	paste(mutation_screening_df[,1], mutation_screening_df[,2], mutation_screening_df[,3], mutation_screening_df[,4], sep = "_"),
+	paste(all_mutation_df[,1], all_mutation_df[,2], all_mutation_df[,3], all_mutation_df[,4], sep = "_"))]
+
+
+per_patient_mutation_profile <- do.call(cbind, lapply(split(coldata_df, coldata_df$subject_id), function(a_row){
+	message(unique(a_row$subject_id))
+	ids <- paste(a_row$condition, a_row$sample_row, sep = "_")
+	column_rep <- rep(columns, times = length(ids))
+	ids_rep <- rep(ids, each = length(columns))
+	all_columns <- paste(ids_rep, column_rep, sep = ".")
+	column_split <- split(all_columns, column_rep)
+	a_snp_freq_matrix <- do.call(cbind, lapply(column_split, function(x){
+		if(length(x) == 1){
+			return(mutation_screening_df[,x])
+		}
+		return(rowSums(mutation_screening_df[,x]))
+	}))
+	a_snp_freq_matrix <- cbind(a_snp_freq_matrix, "total" = rowSums(a_snp_freq_matrix))
+	a_snp_freq_matrix <- cbind(a_snp_freq_matrix, "vaf" = rowSums(a_snp_freq_matrix[,c("altf", "altv")]) / a_snp_freq_matrix[,"total"])
+
+	strand_bias <- vapply(seq_len(nrow(a_snp_freq_matrix)), function(x){
+		fisher.test(matrix(data = c(a_snp_freq_matrix[x,3],a_snp_freq_matrix[x,1],a_snp_freq_matrix[x,4],a_snp_freq_matrix[x,2]),nrow = 2, ncol = 2))$p.value
+	},1)
+	a_snp_freq_matrix <- cbind(a_snp_freq_matrix, strand_bias)
+	colnames(a_snp_freq_matrix) <- paste(unique(a_row$subject_id), colnames(a_snp_freq_matrix), sep = "_")
+	return(a_snp_freq_matrix)
+}))
+
+summarised_mutation_df <- cbind(mutation_screening_df[,c(1,2,3,4,ncol(mutation_screening_df))], per_patient_mutation_profile)
+unique_coldata_df <- unique(coldata_df[, c("subject_id", "disease_duration_in_months", "age_at_symptom_onset", "age_at_death", "condition")])
+
+all_columns <- c(columns, c("total", "vaf", "strand_bias"))
+min_reads <- 10
+vaf <- 0.1
+
+ 
+
+patient_specific_mutation_list <- lapply(seq_len(nrow(unique_coldata_df)), function(x){
+	current_row <- unique_coldata_df[x,]
+	col_names <- paste(current_row$subject_id, all_columns, sep = "_")
+	patient_specific_mutations <- summarised_mutation_df[,c(1:5, which(colnames(summarised_mutation_df) %in% col_names))]
+	colnames(patient_specific_mutations) <- c(colnames(patient_specific_mutations)[1:5], all_columns)
+	filtered_patient_specific_mutations <- filter_mutations(patient_specific_mutations, depth = 10, vaf = 0.1)
+	a_vector <- rep(0, nrow(summarised_mutation_df))
+	names(a_vector) <- summarised_mutation_df$snp_id
+	a_vector[filtered_patient_specific_mutations$snp_id] <- 1
+	list(filtered_mutations = filtered_patient_specific_mutations, 
+		occurence_vector = a_vector)
+})
+names(patient_specific_mutation_list) <- unique_coldata_df$subject_id
+
+
+occurence_matrix <- do.call(cbind, lapply(patient_specific_mutation_list, function(x){
+	x$occurence_vector
+}))
+
+colnames(occurence_matrix) <- unique_coldata_df$subject_id
+
+
+nonzero_occurence_matrix <- occurence_matrix[rowSums(occurence_matrix) > 0,]
+
+selected_mutations_df <- summarised_mutation_df[match(rownames(nonzero_occurence_matrix), summarised_mutation_df$snp_id),c(1:5)]
+
+rna_editing_sites_df <- data.table::fread(file.path(analysis_input_dir, "ERAP_sites.txt"), data.table = F)
+selected_mutations_df$status <- "possible_variant"
+seqlevelsStyle(rna_editing_sites_df[,1]) <- "ENSEMBL"
+selected_mutations_df$status[paste(selected_mutations_df[,1], 
+	selected_mutations_df[,2], 
+	selected_mutations_df[,3], 
+	selected_mutations_df[,4], sep = "_") %in% paste(rna_editing_sites_df[,1], 
+	rna_editing_sites_df[,2], 
+	rna_editing_sites_df[,3], 
+	rna_editing_sites_df[,4], sep = "_")] <- "rna_editing"
+
+
+mutation_frequency_matrix <- do.call(cbind, lapply(split(unique_coldata_df, unique_coldata_df$condition), function(x){
+	rowSums(nonzero_occurence_matrix[,x$subject_id]) / ncol(nonzero_occurence_matrix)
+}))
+
+selected_mutations_df <- cbind(selected_mutations_df, mutation_frequency_matrix)
+
+saveRDS(object = list(mutation_list = selected_mutations_df, 
+	frequency_matrix = nonzero_occurence_matrix, 
+	patient_mutation_list = patient_specific_mutation_list), file = file.path(analysis_save_dir, "01-list-of-selected-mutations-for-each-subject.rds"))

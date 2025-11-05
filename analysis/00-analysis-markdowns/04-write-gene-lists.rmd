@@ -1,0 +1,88 @@
+---
+title:ERAP2 knockdown in astrocytes
+output:pdf_document
+---
+
+
+### Main questions
+
+We set out to understand the role of ERAP2 in ALS. The main questions that have been defined until now are,
+
+- What is the effect of ERAP2 siRNA in control lines?
+- What is the effect between control and ALS lines? 
+- What is the effect of ERAP2 siRNA on ALS lines? 
+
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/camp/lab/luscomben/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis`.
+
+```{r}
+
+setwd("/camp/lab/luscomben/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis")
+
+```
+
+
+- Include required packages and functions
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+require("stringr")
+require("DESeq2")
+require("ggplot2")
+require("RColorBrewer")
+require("stringr")
+
+
+```
+
+- Set paths
+
+```{r}
+
+analysis_path <- "02-differential-expression-profiling"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+
+```
+
+
+
+```{r}
+
+
+```
+
+### 1.0 Extract ALS vs Control genes affected by ERAP2 KD
+
+- Write list of 163 differentially expressed genes in als vs control affected by ERAP2 KD. 
+
+
+```{r}
+
+candidate_genes_df <- readRDS(file.path(save_dir, "02-significantly-affected-genes-by-kd-in-als-vs-control.rds"))
+write.table(x = candidate_genes_df, file = file.path(output_dir, "01-significantly-differentially-expressed-genes-in-als-vs-control-affected-by-erap2-kd.txt"),
+        quote = F, row.names = F, col.names = T, sep = "\t")
+
+```
+
+### 1.0 Extract Control genes affected by ERAP2 KD
+
+
+- Write list of 474 differentially expressed genes affected by ERAP2 KD in control. 
+
+
+```{r}
+
+candidate_genes_df <- readRDS(file.path(save_dir, "01-significantly-differentially-expressed-genes-pval-less-than-0.05.RDS"))
+candidate_genes_df <- candidate_genes_df[candidate_genes_df$contrasts == "erap2_kd_effect_in_control" &
+        !is.na(candidate_genes_df$gene_name),]
+write.table(x = candidate_genes_df, file = file.path(output_dir, "01-significantly-differentially-expressed-genes-by-erap2-kd-in-control-cells.txt"),
+        quote = F, row.names = F, col.names = T, sep = "\t")
+
+```
+

@@ -1,0 +1,151 @@
+,all_locations,Freq,higher_group
+113,Nucleus,327,Nucleus
+33,Cytoplasm,319,Cytoplasm
+7,Cell membrane,146,Cell membrane/Endomembrane
+76,Endoplasmic reticulum membrane,116,ER / ER-Golgi / Golgi
+97,Membrane,83,Cell membrane/Endomembrane
+105,Mitochondrion,65,Mitochondria
+47,"Cytoplasm, cytosol",64,Cytoplasm
+106,Mitochondrion inner membrane,53,Mitochondria
+122,"Nucleus, nucleolus",45,Nucleus
+36,"Cytoplasm, cytoskeleton",42,Microtubules
+84,Golgi apparatus membrane,36,ER / ER-Golgi / Golgi
+28,Chromosome,35,Nucleus
+95,Lysosome membrane,33,Lysosome
+51,"Cytoplasm, perinuclear region",32,Cytoplasm
+143,Secreted,30,Extracellular
+41,"Cytoplasm, cytoskeleton, microtubule organizing center, centrosome",24,Microtubules
+74,Endoplasmic reticulum,24,ER / ER-Golgi / Golgi
+45,"Cytoplasm, cytoskeleton, spindle",21,Cytoplasm
+83,Golgi apparatus,21,ER / ER-Golgi / Golgi
+80,Endosome membrane,18,Vesicles
+119,Nucleus speckle,17,Nucleus
+123,"Nucleus, nucleoplasm",17,Nucleus
+72,Early endosome membrane,16,Vesicles
+9,"Cell projection, axon",15,Cell projections
+13,"Cell projection, dendrite",15,Cell projections
+55,Cytoplasmic vesicle membrane,15,Vesicles
+94,Lysosome,15,Lysosome
+108,Mitochondrion matrix,15,Mitochondria
+30,"Chromosome, centromere, kinetochore",14,Nucleus
+54,Cytoplasmic vesicle,13,Vesicles
+87,"Golgi apparatus, Golgi stack membrane",13,ER / ER-Golgi / Golgi
+111,Mitochondrion outer membrane,13,Mitochondria
+10,"Cell projection, cilium",12,Cell projections
+38,"Cytoplasm, cytoskeleton, cilium basal body",12,Microtubules
+46,"Cytoplasm, cytoskeleton, spindle pole",12,Microtubules
+89,"Golgi apparatus, trans-Golgi network membrane",12,ER / ER-Golgi / Golgi
+110,Mitochondrion membrane,12,Mitochondria
+148,Synapse,12,Synapse
+93,Lipid droplet,11,Vesicles
+139,Recycling endosome membrane,11,Vesicles
+78,Endoplasmic reticulum-Golgi intermediate compartment membrane,10,ER / ER-Golgi / Golgi
+88,"Golgi apparatus, trans-Golgi network",10,ER / ER-Golgi / Golgi
+92,Late endosome membrane,10,Vesicles
+37,"Cytoplasm, cytoskeleton, cilium axoneme",9,Microtubules
+71,Early endosome,9,Vesicles
+127,Peroxisome membrane,9,Vesicles
+2,Basolateral cell membrane,8,Cell membrane/Endomembrane
+73,Endomembrane system,8,Cell membrane/Endomembrane
+3,Cell junction,7,Cell membrane/Endomembrane
+5,"Cell junction, focal adhesion",7,Cell membrane/Endomembrane
+29,"Chromosome, centromere",7,Nucleus
+75,Endoplasmic reticulum lumen,7,ER / ER-Golgi / Golgi
+79,Endosome,7,Vesicles
+86,"Golgi apparatus, cis-Golgi network membrane",7,ER / ER-Golgi / Golgi
+114,Nucleus envelope,7,Nucleus
+116,Nucleus matrix,7,Nucleus
+132,Postsynaptic density,7,Synapse
+60,"Cytoplasmic vesicle, COPI-coated vesicle membrane",6,Vesicles
+62,"Cytoplasmic vesicle, phagosome",6,Vesicles
+96,Melanosome,6,Vesicles
+103,Midbody,6,Microtubules
+125,Perikaryon,6,Cytoplasm
+133,Postsynaptic density membrane,6,Synapse
+146,"Secreted, extracellular space, extracellular matrix",6,Extracellular
+12,"Cell projection, cilium, flagellum",5,Cell projections
+14,"Cell projection, dendritic spine",5,Cell projections
+17,"Cell projection, growth cone",5,Cell projections
+31,"Chromosome, telomere",5,Nucleus
+50,"Cytoplasm, P-body",5,Cytoplasm
+56,"Cytoplasmic vesicle, autophagosome",5,Vesicles
+58,"Cytoplasmic vesicle, clathrin-coated vesicle",5,Vesicles
+61,"Cytoplasmic vesicle, COPII-coated vesicle membrane",5,Vesicles
+63,"Cytoplasmic vesicle, phagosome membrane",5,Vesicles
+65,"Cytoplasmic vesicle, secretory vesicle membrane",5,Vesicles
+66,"Cytoplasmic vesicle, secretory vesicle, acrosome",5,Vesicles
+69,"Cytoplasmic vesicle, secretory vesicle, synaptic vesicle membrane",5,Vesicles
+121,"Nucleus, nuclear pore complex",5,Nucleus
+134,Preautophagosomal structure,5,Vesicles
+136,Presynapse,5,Synapse
+1,Apical cell membrane,4,Cell membrane/Endomembrane
+27,Cell surface,4,Cell membrane/Endomembrane
+34,"Cytoplasm, cell cortex",4,Cytoplasm
+102,Microsome membrane,4,Vesicles
+117,Nucleus membrane,4,Nucleus
+131,Postsynaptic cell membrane,4,Synapse
+4,"Cell junction, adherens junction",3,Cell membrane/Endomembrane
+11,"Cell projection, cilium membrane",3,Cell membrane/Endomembrane
+19,"Cell projection, lamellipodium",3,Cell membrane/Endomembrane
+24,"Cell projection, ruffle",3,Cell membrane/Endomembrane
+25,"Cell projection, ruffle membrane",3,Cell membrane/Endomembrane
+26,"Cell projection, stereocilium",3,Cell membrane/Endomembrane
+32,Cleavage furrow,3,Cell membrane/Endomembrane
+39,"Cytoplasm, cytoskeleton, flagellum axoneme",3,Microtubules
+49,"Cytoplasm, myofibril, sarcomere, Z line",3,Microtubules
+91,Late endosome,3,Vesicles
+100,"Membrane, clathrin-coated pit",3,Vesicles
+109,"Mitochondrion matrix, mitochondrion nucleoid",3,Mitochondria
+115,Nucleus inner membrane,3,Nucleus
+118,Nucleus outer membrane,3,Nucleus
+120,"Nucleus, Cajal body",3,Nucleus
+126,Peroxisome,3,Vesicles
+138,Recycling endosome,3,Vesicles
+145,"Secreted, extracellular space",3,Extracellular
+149,"Synapse, synaptosome",3,Synapse
+6,"Cell junction, tight junction",2,Cell membrane/Endomembrane
+15,"Cell projection, filopodium",2,Cell projections
+21,"Cell projection, neuron projection",2,Cell projections
+22,"Cell projection, phagocytic cup",2,Cell projections
+40,"Cytoplasm, cytoskeleton, microtubule organizing center",2,Microtubules
+42,"Cytoplasm, cytoskeleton, microtubule organizing center, centrosome, centriolar satellite",2,Microtubules
+43,"Cytoplasm, cytoskeleton, microtubule organizing center, centrosome, centriole",2,Microtubules
+52,Cytoplasmic granule,2,Cytoplasm
+64,"Cytoplasmic vesicle, secretory vesicle",2,Vesicles
+68,"Cytoplasmic vesicle, secretory vesicle, synaptic vesicle",2,Vesicles
+82,"Endosome, multivesicular body membrane",2,Vesicles
+99,"Membrane, caveola",2,Cell membrane/Endomembrane
+101,Microsome,2,Vesicles
+124,"Nucleus, PML body",2,Nucleus
+130,Postsynapse,2,Synapse
+137,Presynaptic cell membrane,2,Synapse
+141,Sarcoplasmic reticulum,2,ER / ER-Golgi / Golgi
+144,"Secreted, extracellular exosome",2,Extracellular
+8,"Cell membrane, sarcolemma",1,Cell membrane/Endomembrane
+16,"Cell projection, filopodium membrane",1,Cell projections
+18,"Cell projection, growth cone membrane",1,Cell projections
+20,"Cell projection, lamellipodium membrane",1,Cell projections
+23,"Cell projection, pseudopodium",1,Cell projections
+35,"Cytoplasm, Cytoplasmic ribonucleoprotein granule",1,Cytoplasm
+44,"Cytoplasm, cytoskeleton, microtubule organizing center, spindle pole body",1,Microtubules
+48,"Cytoplasm, myofibril, sarcomere, M line",1,Microtubules
+53,Cytoplasmic granule membrane,1,Cytoplasm
+57,"Cytoplasmic vesicle, autophagosome membrane",1,Vesicles
+59,"Cytoplasmic vesicle, clathrin-coated vesicle membrane",1,Vesicles
+67,"Cytoplasmic vesicle, secretory vesicle, neuronal dense core vesicle",1,Vesicles
+70,Dynein axonemal particle,1,Microtubules
+77,Endoplasmic reticulum-Golgi intermediate compartment,1,ER / ER-Golgi / Golgi
+81,"Endosome, multivesicular body",1,Vesicles
+85,"Golgi apparatus, cis-Golgi network",1,ER / ER-Golgi / Golgi
+90,Golgi outpost,1,ER / ER-Golgi / Golgi
+98,Membrane raft,1,Cell membrane/Endomembrane
+104,"Midbody, Midbody ring",1,Microtubules
+107,Mitochondrion intermembrane space,1,Mitochondria
+112,Myelin membrane,1,Cell membrane/Endomembrane
+128,Photoreceptor inner segment membrane,1,Cell membrane/Endomembrane
+129,Photoreceptor outer segment membrane,1,Cell membrane/Endomembrane
+135,Preautophagosomal structure membrane,1,Vesicles
+140,Rough endoplasmic reticulum membrane,1,ER / ER-Golgi / Golgi
+142,Sarcoplasmic reticulum membrane,1,ER / ER-Golgi / Golgi
+147,"Secreted, extracellular space, extracellular matrix, basement membrane",1,Extracellular
+150,Vacuole membrane,1,Cell membrane/Endomembrane

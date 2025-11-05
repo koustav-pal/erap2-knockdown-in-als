@@ -1,0 +1,275 @@
+---
+title:Microsatellite summary analysis
+output:pdf_document
+---
+
+
+### Main questions
+
+Investigate the survival probability of patients using ERAP2 expression
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/nemo/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis/11-postmortem-data-analysis` and include required packages 
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/export2/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis/")
+library("stringr")
+library("GenomicRanges")
+library("DESeq2")
+library("rtracklayer")
+library("ggplot2")
+library("GenomicFeatures")
+library("GenomeInfoDb")
+require("Rsamtools")
+require("STRINGdb")
+require("CEMiTool")
+
+
+```
+
+### 2.0 Include experiment matrix
+
+- Lets first import the counts.
+
+```{r include = FALSE, message = FALSE, warning = FALSE}
+
+analysis_path <- "14-01-erap2-ov-proteomics"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+tmp_dir <- file.path(analysis_path, "tmp")
+dir.create(save_dir, recursive = T)
+dir.create(plot_dir, recursive = T)
+dir.create(input_dir, recursive = T)
+dir.create(output_dir, recursive = T)
+dir.create(tmp_dir, recursive = T)
+
+```
+
+### 3.0 Imports
+
+- Load genic counts list
+
+```{r}
+
+erap2_ov_df <- read.csv(file.path(input_dir, "ERAP2_overexpression_proteomics.csv"))
+annotation_gtf <- "/export2/home/koustav/Genomes/ENSEMBL_hg38/Homo_sapiens.GRCh38.104.chr_patch_hapl_scaff.gtf"
+
+```
+
+### Analysis
+
+- Summarise protein matrix
+
+```{r}
+
+annotation_df <- reshape2::melt(as.matrix(erap2_ov_df[-1,c(41, 42, 43)]))
+genes_df <- annotation_df[annotation_df$Var2 == "T..Genes",]
+protein_df <- annotation_df[annotation_df$Var2 == "T..Protein.Group",]
+gene_to_protein_df <- reshape2::acast(annotation_df, formula = Var1 ~ Var2, value.var = "value")
+
+melt_erap2_ov_df <- reshape2::melt(as.matrix(erap2_ov_df[-1,c(1:27)]))
+colnames(melt_erap2_ov_df) <-c("row_x", "variable", "value")
+
+variable_split <- str_split(melt_erap2_ov_df$variable, pattern = "[_,.]", simplify = T)[,-c(1)]
+
+
+melt_erap2_ov_df$line <- variable_split[,1]
+melt_erap2_ov_df$erap2 <- variable_split[,2]
+melt_erap2_ov_df$replicate <- variable_split[,3]
+melt_erap2_ov_df$sample_name <- paste(melt_erap2_ov_df$line, melt_erap2_ov_df$erap2, sep = "_")
+melt_erap2_ov_df$unique_sample_name <- paste(melt_erap2_ov_df$line, melt_erap2_ov_df$erap2, melt_erap2_ov_df$replicate, sep = "_")
+melt_erap2_ov_df$Genes <- genes_df[match(melt_erap2_ov_df$row_x, genes_df$Var1),"value"]
+melt_erap2_ov_df$protein_id <- protein_df[match(melt_erap2_ov_df$row_x, protein_df$Var1),"value"]
+melt_erap2_ov_df$value <- as.numeric(melt_erap2_ov_df$value)
+
+
+non_na_keep_melt_erap2_kd_df <-  melt_erap2_ov_df[!is.na(melt_erap2_ov_df$value) & melt_erap2_ov_df$Genes != "NA" & melt_erap2_ov_df$Genes != "",]
+
+protein_matrix <- reshape2::acast(data = non_na_keep_melt_erap2_kd_df, formula = Genes ~ unique_sample_name, value.var = "value")
+experiment_df <- unique(non_na_keep_melt_erap2_kd_df[,c("line", "erap2", "sample_name", "unique_sample_name")])
+
+
+protein_sparsity <- rowSums(protein_matrix == 0 | is.na(protein_matrix)) / ncol(protein_matrix)
+average_signal <- rowMeans(protein_matrix, na.rm = T)
+summarised_protein_matrix <- do.call(cbind, lapply(split(experiment_df, experiment_df$sample_name), function(temp_df){
+    rowSums(protein_matrix[,temp_df$unique_sample_name], na.rm = T) / ncol(protein_matrix[,temp_df$unique_sample_name])
+}))
+
+
+```
+
+- Perform CemiTool analysis
+
+```{r}
+    keep_experiment_df <- experiment_df[experiment_df$erap2 != "UN",]
+    cem <- cemitool(as.data.frame(summarised_protein_matrix[,keep_experiment_df$sample_name]), annot = keep_experiment_df, 
+        apply_vst = F, sample_name_column = "sample_name", class_column = "erap2")
+
+# Fetch modules
+    module_df <- module_genes(cem)
+# genes_in_same_module <- unique(module_df$genes)
+
+saveRDS(object = module_df, file = file.path(save_dir, "04-erap2-OV-WGCNA-gene-modules.rds"))
+
+
+```
+
+- Get the STRING network
+
+
+```{r}
+
+require("STRINGdb")
+require("ggrepel")
+source("11-postmortem-data-analysis/scripts/src/cemitools_network_plotting_functions.R")
+
+
+string_db <- STRINGdb$new(version = "11.5", species = 9606, score_threshold = 200, input_directory = tmp_dir)
+genes_from_modules_mapped_to_string_db <- string_db$map(module_df, "genes", removeUnmappedRows = TRUE)
+
+interactions_df <- string_db$get_interactions(genes_from_modules_mapped_to_string_db$STRING_id)
+
+cemi_interaction_df <- data.frame(
+    gene1symbol = genes_from_modules_mapped_to_string_db[match(interactions_df$from, genes_from_modules_mapped_to_string_db$STRING_id),"genes"],
+    gene2symbol = genes_from_modules_mapped_to_string_db[match(interactions_df$to, genes_from_modules_mapped_to_string_db$STRING_id),"genes"])
+
+interactions_data(cem) <- cemi_interaction_df
+
+# interactions_list <- cem@interactions
+# modified_interactions_list <- lapply(interactions_list, function(x){
+#     igraph::V(x)$name <- annotation_ranges$gene_name[match(igraph::V(x)$name, annotation_ranges$gene_id)]
+#     x
+# })
+# spinal_cord_object@interactions <- modified_interactions_list
+
+# spinal_cord_object <- plot_interactions(spinal_cord_object)
+
+
+
+```
+
+- Load GSEA enrichment results
+
+
+```{r}
+
+gsea_results_list <- readRDS(file.path(save_dir, "03-01-save-list-of-correlated-gsea-terms-in-erap2-ov.rds"))
+experiment_df <- gsea_results_list$experiment_matrix
+
+splicing_terms <- gsea_results_list$splicing
+lipid_terms <- gsea_results_list$lipid
+
+gsea_results_df <- gsea_results_list$gsea_results
+
+
+splicing_related_genes <- unique(do.call(c, lapply(gsea_results_df, function(x){
+    unique(do.call(c, x$leadingEdge[x$pathway %in% splicing_terms]))
+})))
+
+which_splicing_modules <- unique(module_df[module_df[,1] %in% splicing_related_genes,"modules"])
+
+lipid_related_genes <- unique(do.call(c, lapply(gsea_results_df, function(x){
+    unique(do.call(c, x$leadingEdge[x$pathway %in% lipid_terms]))
+})))
+pseudo_module_splicing_lipid <- unique(rbind(module_df[module_df[,1] %in% lipid_related_genes,], module_df[module_df[,1] %in% splicing_related_genes,]))
+pseudo_module_splicing_lipid$modules <- "MSpLi"
+
+which_lipid_modules <- unique(module_df[module_df[,1] %in% lipid_related_genes,"modules"])
+select_modules <- intersect(which_lipid_modules, which_splicing_modules)
+
+```
+
+- Perform gene set enrichment
+
+```{r}
+
+
+unloadNamespace("enrichR")
+require("enrichR")
+
+current_module_df <- module_df[module_df[,2] %in% select_modules,]
+gene_split <- split(pseudo_module_splicing_lipid, pseudo_module_splicing_lipid$modules)
+
+dbs <- "GO_Biological_Process_2023"
+groups <- names(gene_split)
+module_enrichment_df <- do.call(rbind, lapply(groups, function(a_group){
+    a_temp_df <- gene_split[[a_group]]
+        db_df_list <- lapply(dbs, function(a_database){
+            message(paste(a_database, a_group))
+            current_genes <- a_temp_df$genes[a_temp_df$modules == a_group]
+            an_enrichment_df <- enrichr(current_genes,  a_database)[[1]]
+            if(nrow(an_enrichment_df) == 0){
+                return(NULL)
+            }
+            an_enrichment_df$num_gene <- length(current_genes)
+            an_enrichment_df$db <- a_database
+            Sys.sleep(5)
+            return(an_enrichment_df)
+        })
+        db_df <- do.call(rbind, db_df_list)
+    db_df$modules <- a_group
+    return(db_df)
+}))
+
+
+module_enrichment_df$gene_ratio <- vapply(module_enrichment_df$Overlap, function(x){
+    eval(parse(text = x))
+},1)
+
+write.csv(x = module_enrichment_df, file = file.path(output_dir, "09-02-gene-set-enrichment-analysis-of-coexpression-modules.csv"))
+
+
+```
+
+- Plot gene set enrichment results
+
+```{r}
+
+require(patchwork)
+
+    my_theme <- theme(
+        legend.position = "bottom",
+        text = element_text(size = 12),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(size = 10),
+        plot.background = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(colour = "azure3",
+        linetype = "dashed",
+        size = 0.2))
+
+module_enrichment_split <- split(module_enrichment_df, module_enrichment_df$modules)
+
+plot_list <- lapply(module_enrichment_split, function(temp_df){
+    significant_df <- temp_df[temp_df$P.value < 0.05 & temp_df$gene_ratio > 0.1,]
+    significant_df <- significant_df[order(significant_df$gene_ratio, decreasing = T),][1:10,]
+    significant_df$label <- vapply(str_split(significant_df$Term, pattern = " "), function(x){
+        paste(x[-length(x)], collapse = " ")
+    },"1")
+
+    significant_df$label <- factor(significant_df$label, levels = significant_df$label[order(-log10(significant_df$P.value), decreasing = F)])
+    ThePlot_1 <- ggplot(significant_df, aes(x = -log10(P.value), y = label))
+    # ThePlot <- ThePlot + geom_boxplot(aes(fill = direction), colour = "#000000", 
+    #     width = 0.5, lwd = 0.5)
+    ThePlot_1 <- ThePlot_1 + geom_point(aes(size = gene_ratio), fill = "#F4AC45", colour = "#000000", shape = 21)
+    # ThePlot <- ThePlot + geom_hline(aes(yintercept = 1), colour = "#000000", lty = "dashed")
+    ThePlot_1 <- ThePlot_1 + scale_x_continuous("-log10 pvalue")
+    ThePlot_1 <- ThePlot_1 + scale_y_discrete("Enriched terms in each module")
+    ThePlot_1 <- ThePlot_1 + theme_bw()
+    ThePlot_1 <- ThePlot_1 + ggtitle(unique(significant_df$modules))
+    ThePlot_1 <- ThePlot_1 + my_theme
+})
+
+all_plots <- wrap_plots(plot_list, nrow = 1, ncol = 1)
+save_plot(ncol = 3, nrow = 3, 
+    base_width = 8, base_height = 5,
+    file = file.path(plot_dir, "09-03-plot-gene-set-enrichment-of-modules.pdf"), plot = all_plots)
+
+```

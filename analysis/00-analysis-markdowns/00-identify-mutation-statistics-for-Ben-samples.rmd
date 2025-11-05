@@ -1,0 +1,74 @@
+---
+title:Astrocyte reactivity analysis
+output:pdf_document
+---
+
+
+### Main questions
+
+We want to find the mutation statistics for Ben's samples
+
+### 1.0 Package requirements
+
+- Include required packages 
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+require("stringr")
+
+```
+
+- change to current working directory `/camp/home/palk/home/users/palk/Projects/0002-Astrocyte-LifeArc-intron-retention/analysis/10-lifearc-target-prioritisation`.
+
+
+- Set paths
+
+```{r}
+setwd("/camp/lab/luscomben/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis/")
+analysis_path <- "04-locating-mutations-in-the-cell-line"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+
+dir.create(save_dir)
+dir.create(plot_dir)
+dir.create(input_dir)
+dir.create(output_dir)
+
+```
+
+### 2.0 Include experiment matrix
+
+- Let's first include the reactivity gene expression matrix and the supplied experiment matrix.
+
+```{r include = FALSE, message = FALSE, warning = FALSE}
+
+experiment_matrix_df <- data.table::fread("01-alignment/input_files/nfcore_sampleinfo.csv", data.table = F)
+experiment_matrix_df$ERAP <- str_split(experiment_matrix_df$sample, pattern = "_", simplify = T)[,2]
+experiment_matrix_df$replicate <- str_split(experiment_matrix_df$sample, pattern = "_", simplify = T)[,1]
+experiment_matrix_df <- experiment_matrix_df[,-c(2,3,4)]
+experiment_matrix_df$condition <- ifelse(experiment_matrix_df$replicate %in% c("C2", "C6"), "ctrl", "vcp")
+
+experiment_matrix_df$fraction <- "whole"
+
+```
+
+### 3.0 Make mutation statistics table
+
+```{r}
+
+file_list <- list.files("04-locating-mutations-in-the-cell-line/output_files/")
+
+mut_stats_df <- do.call(rbind, lapply(seq_len(nrow(experiment_matrix_df)), function(x){
+    current_file <- grepl(x = file_list, pattern = experiment_matrix_df[x,"sample"])
+    current_df <- read.table(file.path("04-locating-mutations-in-the-cell-line/output_files/", file_list[current_file]), header = F)
+    colnames(current_df) <- c("chr", "start", "ref", "alt", "ref_freq", "alt_freq", "fwd_read", "rev_read")
+    cbind(experiment_matrix_df[x,], current_df)
+}))
+
+mut_stats_df$percent_ref <- mut_stats_df$ref_freq / (mut_stats_df$ref_freq+mut_stats_df$alt_freq)
+
+
+
+```

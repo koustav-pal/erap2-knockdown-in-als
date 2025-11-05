@@ -1,0 +1,29 @@
+Sample	Filename	File type	Encoding	Total Sequences	Sequences flagged as poor quality	Sequence length	%GC	total_deduplicated_percentage	avg_sequence_length	basic_statistics	per_base_sequence_quality	per_sequence_quality_scores	per_base_sequence_content	per_sequence_gc_content	per_base_n_content	sequence_length_distribution	sequence_duplication_levels	overrepresented_sequences	adapter_content	per_tile_sequence_quality
+C1_CTRL_1	C1_CTRL_1_val_1.fq.gz	Conventional base calls	Sanger / Illumina 1.9	49602108.0	0.0	20-101	50.0	40.87073899348796	98.90811801788746	pass	pass	pass	fail	pass	pass	warn	fail	pass	pass	
+C1_CTRL_2	C1_CTRL_2_val_2.fq.gz	Conventional base calls	Sanger / Illumina 1.9	49602108.0	0.0	20-101	50.0	37.2845928401076	98.85822658988606	pass	pass	pass	warn	pass	pass	warn	fail	pass	pass	
+C1_ERAP2_1	C1_ERAP2_1_val_1.fq.gz	Conventional base calls	Sanger / Illumina 1.9	51634298.0	0.0	20-101	50.0	38.46790809074944	99.5001601454909	pass	pass	pass	fail	pass	pass	warn	fail	pass	pass	
+C1_ERAP2_2	C1_ERAP2_2_val_2.fq.gz	Conventional base calls	Sanger / Illumina 1.9	51634298.0	0.0	20-101	50.0	35.429301330925995	99.455788940909	pass	pass	pass	warn	pass	pass	warn	fail	pass	pass	
+C2_CTRL_1	C2_CTRL_1_val_1.fq.gz	Conventional base calls	Sanger / Illumina 1.9	121217344.0	0.0	20-101	51.0	28.05986955433045	99.1131297184667	pass	pass	pass	fail	pass	pass	warn	fail	pass	pass	
+C2_CTRL_2	C2_CTRL_2_val_2.fq.gz	Conventional base calls	Sanger / Illumina 1.9	121217344.0	0.0	20-101	51.0	27.883722814989675	99.0577244127705	pass	pass	pass	warn	pass	pass	warn	fail	warn	pass	
+C2_ERAP2_1	C2_ERAP2_1_val_1.fq.gz	Conventional base calls	Sanger / Illumina 1.9	109397019.0	0.0	20-101	50.0	26.747223191606906	99.15894916661303	pass	pass	pass	fail	pass	pass	warn	fail	pass	pass	
+C2_ERAP2_2	C2_ERAP2_2_val_2.fq.gz	Conventional base calls	Sanger / Illumina 1.9	109397019.0	0.0	20-101	51.0	24.70472667002749	99.105349479404	pass	pass	pass	warn	pass	pass	warn	fail	warn	pass	
+C6_CTRL_1	C6_CTRL_1_val_1.fq.gz	Conventional base calls	Sanger / Illumina 1.9	116011424.0	0.0	20-101	50.0	29.132966006337487	99.00401646651626	pass	pass	pass	fail	pass	pass	warn	fail	pass	pass	
+C6_CTRL_2	C6_CTRL_2_val_2.fq.gz	Conventional base calls	Sanger / Illumina 1.9	116011424.0	0.0	20-101	51.0	26.66804780969073	98.95742383094961	pass	pass	pass	warn	pass	pass	warn	fail	warn	pass	
+C6_ERAP2_1	C6_ERAP2_1_val_1.fq.gz	Conventional base calls	Sanger / Illumina 1.9	109347330.0	0.0	20-101	50.0	28.630609982301923	98.87796378750171	pass	pass	pass	fail	pass	pass	warn	fail	pass	pass	
+C6_ERAP2_2	C6_ERAP2_2_val_2.fq.gz	Conventional base calls	Sanger / Illumina 1.9	109347330.0	0.0	20-101	51.0	26.80527152544037	98.8371256618703	pass	pass	pass	warn	pass	pass	warn	fail	warn	pass	
+GliA_CTRL_1	GliA_CTRL_1_val_1.fq.gz	Conventional base calls	Sanger / Illumina 1.9	127425557.0	0.0	20-101	50.0	25.359914208725844	98.61026729512353	pass	pass	pass	fail	pass	pass	warn	fail	pass	pass	
+GliA_CTRL_2	GliA_CTRL_2_val_2.fq.gz	Conventional base calls	Sanger / Illumina 1.9	127425557.0	0.0	20-101	50.0	23.17059889931821	98.56755346182241	pass	pass	pass	warn	pass	pass	warn	fail	warn	pass	
+GliA_ERAP2_1	GliA_ERAP2_1_val_1.fq.gz	Conventional base calls	Sanger / Illumina 1.9	119948602.0	0.0	20-101	50.0	23.163434657687485	98.56021658343296	pass	pass	pass	fail	pass	pass	warn	fail	pass	pass	
+GliA_ERAP2_2	GliA_ERAP2_2_val_2.fq.gz	Conventional base calls	Sanger / Illumina 1.9	119948602.0	0.0	20-101	50.0	22.586890967787976	98.51559925642151	pass	pass	pass	warn	pass	pass	warn	fail	warn	pass	
+GliB_CTRL_1	GliB_CTRL_1_val_1.fq.gz	Conventional base calls	Sanger / Illumina 1.9	47203267.0	0.0	20-101	50.0	38.975986961952465	98.8307629639279	pass	pass	pass	fail	pass	pass	warn	fail	pass	pass	
+GliB_CTRL_2	GliB_CTRL_2_val_2.fq.gz	Conventional base calls	Sanger / Illumina 1.9	47203267.0	0.0	20-101	50.0	35.221736549601765	98.79154741556341	pass	pass	pass	warn	pass	pass	warn	fail	warn	pass	
+GliB_ERAP2_1	GliB_ERAP2_1_val_1.fq.gz	Conventional base calls	Sanger / Illumina 1.9	46588421.0	0.0	20-101	50.0	38.53182786403787	98.48083338132452	pass	pass	pass	fail	pass	pass	warn	fail	pass	pass	
+GliB_ERAP2_2	GliB_ERAP2_2_val_2.fq.gz	Conventional base calls	Sanger / Illumina 1.9	46588421.0	0.0	20-101	50.0	35.4313984070445	98.44508102131213	pass	pass	pass	fail	pass	pass	warn	fail	warn	pass	
+NCRM6_CTRL_1	NCRM6_CTRL_1_val_1.fq.gz	Conventional base calls	Sanger / Illumina 1.9	80055831.0	0.0	20-101	50.0	31.548624565958704	98.76815511414777	pass	pass	pass	fail	pass	pass	warn	fail	pass	pass	
+NCRM6_CTRL_2	NCRM6_CTRL_2_val_2.fq.gz	Conventional base calls	Sanger / Illumina 1.9	80055831.0	0.0	20-101	50.0	29.161465261496982	98.72278680112633	pass	pass	pass	warn	pass	pass	warn	fail	warn	pass	
+NCRM6_ERAP2_1	NCRM6_ERAP2_1_val_1.fq.gz	Conventional base calls	Sanger / Illumina 1.9	81539325.0	0.0	20-101	50.0	28.76428672671061	98.73629287463442	pass	pass	pass	fail	pass	pass	warn	fail	pass	pass	
+NCRM6_ERAP2_2	NCRM6_ERAP2_2_val_2.fq.gz	Conventional base calls	Sanger / Illumina 1.9	81539325.0	0.0	20-101	50.0	26.94041818370848	98.69311871296458	pass	pass	pass	warn	pass	pass	warn	fail	warn	pass	
+NCRME6_CTRL_1	NCRME6_CTRL_1_val_1.fq.gz	Conventional base calls	Sanger / Illumina 1.9	41989317.0	0.0	20-101	50.0	42.094345599027356	98.5618204268481	pass	pass	pass	fail	pass	pass	warn	fail	pass	pass	pass
+NCRME6_CTRL_2	NCRME6_CTRL_2_val_2.fq.gz	Conventional base calls	Sanger / Illumina 1.9	41989317.0	0.0	20-101	50.0	38.890712697232104	98.52345809768708	pass	pass	pass	warn	pass	pass	warn	fail	warn	pass	warn
+NCRME6_ERAP2_1	NCRME6_ERAP2_1_val_1.fq.gz	Conventional base calls	Sanger / Illumina 1.9	44335451.0	0.0	20-101	50.0	40.21172602088121	98.23301777171501	pass	pass	pass	fail	pass	pass	warn	fail	pass	pass	pass
+NCRME6_ERAP2_2	NCRME6_ERAP2_2_val_2.fq.gz	Conventional base calls	Sanger / Illumina 1.9	44335451.0	0.0	20-101	50.0	37.2551760609066	98.19210838748432	pass	pass	pass	warn	pass	pass	warn	fail	warn	pass	warn

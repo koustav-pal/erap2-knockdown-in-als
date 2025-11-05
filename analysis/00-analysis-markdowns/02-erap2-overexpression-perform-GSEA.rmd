@@ -1,0 +1,428 @@
+---
+title:Hannah's astrocyte and motor neuron data
+output:pdf_document
+---
+
+
+### Main questions
+
+We set out to understand the role of hypoxia in astrocytes.
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/camp/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis` and include required packages
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/camp/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis")
+require("stringr")
+require("DESeq2")
+require("PCAtools")
+require("rtracklayer")
+require("stringr")
+require("ggplot2")
+require("RColorBrewer")
+require("enrichR")
+require("msigdbr")
+require("fgsea")
+require("clusterProfiler")
+source("useful_functions/plot_utils.R")
+require("enrichplot")
+
+
+```
+
+- Set paths
+
+```{r}
+
+rdata_dir <- "02-01-differential-expression-profiling/rdata_files/"
+output_dir <- "02-01-differential-expression-profiling/output_files/"
+input_dir <- "02-01-differential-expression-profiling/input_files/"
+plot_dir <- "02-01-differential-expression-profiling/plots/"
+tmp_dir <- "02-01-differential-expression-profiling/tmp/"
+if(!(file.exists(plot_dir))){
+    dir.create(plot_dir)
+}
+if(!(file.exists(input_dir))){
+    dir.create(input_dir)
+}
+if(!(file.exists(output_dir))){
+    dir.create(output_dir)
+}
+if(!(file.exists(rdata_dir))){
+    dir.create(rdata_dir)
+}
+if(!(file.exists(tmp_dir))){
+    dir.create(tmp_dir)
+}
+
+```
+
+
+
+### Load annotation file
+
+- Load ensembl annotation gtf
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+require("rtracklayer")
+annotation_gtf <- "/camp/lab/patanir/home/users/palk/Genomes/ENSEMBL_hg38/Homo_sapiens.GRCh38.104.chr_patch_hapl_scaff.gtf"
+annotation_ranges <- import.gff2(annotation_gtf)
+annotation_gene_ranges <- annotation_ranges[annotation_ranges$type == "gene"]
+
+```
+
+- Load Astrocyte data object
+
+```{r}
+
+de_object <- readRDS(file.path(rdata_dir, "01-erap2-overexpression-differentially-expressed-objects.rds"))
+diff_object <- de_object$differential_object
+de_object_vst <- de_object$vst_matrix
+de_contrast_list <- de_object$contrasts
+
+```
+
+
+### 5.0 Perform GSEA
+
+- Plot volcano plot
+
+```{r}
+
+all_de_df_list <- lapply(names(de_contrast_list), function(x){
+    message(x)
+    a_de_object <- de_contrast_list[[x]]
+    filter <- !is.na(a_de_object$padj)
+    logfcs <- a_de_object$log2FoldChange[filter]
+
+    data.frame(contrasts = x, 
+        gene_ids = rownames(a_de_object)[filter],
+        logfc = logfcs,
+        pval = a_de_object$pvalue[filter],
+        padj = a_de_object$padj[filter])
+})
+all_de_df <- do.call(rbind, all_de_df_list)
+
+all_de_df$gene_name <- annotation_gene_ranges$gene_name[match(all_de_df$gene_id, annotation_gene_ranges$gene_id)]
+
+
+```
+
+
+- Map Entrez IDs to Ensembl IDs
+
+```{r}
+
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+all_de_df$entrez_id = mapIds(org.Hs.eg.db,
+                    keys=all_de_df$gene_ids,
+                    column="ENTREZID",
+                    keytype="ENSEMBL",
+                    multiVals="first")
+
+```
+
+
+- Perform C2 CP REACTOME gene set enrichment
+
+```{r}
+
+require("msigdbr")
+require("fgsea")
+require("parallel")
+
+reactome_gene_sets = msigdbr(species = "human", category = "C2", subcategory = "CP:REACTOME")
+
+msigdbr_list = split(x = reactome_gene_sets$gene_symbol, f = reactome_gene_sets$gs_name)
+
+
+all_de_df_split <- split(all_de_df, all_de_df$contrasts)
+
+
+reactome_gsea_df_list <- lapply(all_de_df_split, function(temp_df){
+    temp_non_na_df <- temp_df[!is.na(temp_df$gene_name) & !is.na(temp_df$logfc) & !is.na(temp_df$padj),]
+    temp_non_na_df$ranks <- rank(temp_non_na_df$logfc)
+    temp_non_na_df <- temp_non_na_df[order(temp_non_na_df$logfc, decreasing = T),]
+    a_vector <- temp_non_na_df$ranks
+    names(a_vector) <- temp_non_na_df$gene_name
+    fgsea(msigdbr_list, a_vector, maxSize = 200)
+})
+
+
+significant_reactome_gsea_df_list <- lapply(reactome_gsea_df_list, function(temp_df){
+    temp_df[temp_df$pval < 0.05 & !is.na(temp_df$log2err),]
+})
+
+
+all_significant_reactome_gsea_df <- do.call(rbind, lapply(names(significant_reactome_gsea_df_list), function(x){
+    temp_df <- as.data.frame(significant_reactome_gsea_df_list[[x]])
+    temp_df$contrast <- x
+    return(temp_df)
+}))
+
+
+saveRDS(object = all_significant_reactome_gsea_df, file = file.path(rdata_dir, "03_erap2_overexpression_reactome_GSEA_pval_0.05.rds"))
+write.table(x = all_significant_reactome_gsea_df[,-8], sep = "\t", quote = F, col.names = T, row.names = F, file = file.path(output_dir,"erap2_overexpression_Reactome_GSEA_pval_0.05.txt"))
+
+```
+
+
+- Perform C2 CP BIOCARTA gene set enrichment
+
+```{r}
+
+require("msigdbr")
+require("fgsea")
+require("parallel")
+
+biocarta_gene_sets = msigdbr(species = "human", category = "C2", subcategory = "CP:BIOCARTA")
+
+msigdbr_list = split(x = biocarta_gene_sets$gene_symbol, f = biocarta_gene_sets$gs_name)
+
+
+all_de_df_split <- split(all_de_df, all_de_df$contrasts)
+
+
+biocarta_gsea_df_list <- lapply(all_de_df_split, function(temp_df){
+    temp_non_na_df <- temp_df[!is.na(temp_df$gene_name) & !is.na(temp_df$logfc) & !is.na(temp_df$padj),]
+    temp_non_na_df$ranks <- rank(temp_non_na_df$logfc)
+    temp_non_na_df <- temp_non_na_df[order(temp_non_na_df$logfc, decreasing = T),]
+    a_vector <- temp_non_na_df$ranks
+    names(a_vector) <- temp_non_na_df$gene_name
+    fgsea(msigdbr_list, a_vector)
+})
+
+
+significant_biocarta_gsea_df_list <- lapply(biocarta_gsea_df_list, function(temp_df){
+    temp_df[temp_df$pval < 0.05 & !is.na(temp_df$log2err),]
+})
+
+
+all_significant_biocarta_gsea_df <- do.call(rbind, lapply(names(significant_biocarta_gsea_df_list), function(x){
+    temp_df <- as.data.frame(significant_biocarta_gsea_df_list[[x]])
+    temp_df$contrast <- x
+    return(temp_df)
+}))
+
+saveRDS(object = all_significant_biocarta_gsea_df, file = file.path(rdata_dir, "03_erap2_overexpression_biocarta_GSEA_pval_0.05.rds"))
+write.table(x = all_significant_biocarta_gsea_df[,-8], sep = "\t", quote = F, col.names = T, row.names = F, file = file.path(output_dir,"erap2_overexpression_biocarta_GSEA_pval_0.05.txt"))
+
+```
+
+- Perform C2 GO:MF gene set enrichment
+
+```{r}
+
+require("msigdbr")
+require("fgsea")
+require("parallel")
+
+go_mf_gene_sets = msigdbr(species = "human", category = "C5", subcategory = "GO:MF")
+
+msigdbr_list = split(x = go_mf_gene_sets$gene_symbol, f = go_mf_gene_sets$gs_name)
+
+
+all_de_df_split <- split(all_de_df, all_de_df$contrasts)
+
+
+go_mf_gsea_df_list <- lapply(all_de_df_split, function(temp_df){
+    temp_non_na_df <- temp_df[!is.na(temp_df$gene_name) & !is.na(temp_df$logfc) & !is.na(temp_df$padj),]
+    temp_non_na_df$ranks <- rank(temp_non_na_df$logfc)
+    temp_non_na_df <- temp_non_na_df[order(temp_non_na_df$logfc, decreasing = T),]
+    a_vector <- temp_non_na_df$ranks
+    names(a_vector) <- temp_non_na_df$gene_name
+    fgsea(msigdbr_list, a_vector, maxSize = 200)
+})
+
+
+significant_go_mf_gsea_df_list <- lapply(go_mf_gsea_df_list, function(temp_df){
+    temp_df[temp_df$pval < 0.05 & !is.na(temp_df$log2err),]
+})
+
+
+all_significant_go_mf_gsea_df <- do.call(rbind, lapply(names(significant_go_mf_gsea_df_list), function(x){
+    temp_df <- as.data.frame(significant_go_mf_gsea_df_list[[x]])
+    temp_df$contrast <- x
+    return(temp_df)
+}))
+
+saveRDS(object = all_significant_go_mf_gsea_df, file = file.path(rdata_dir, "03_erap2_overexpression_go_mf_GSEA_pval_0.05.rds"))
+write.table(x = all_significant_go_mf_gsea_df[,-8], sep = "\t", quote = F, col.names = T, row.names = F, file = file.path(output_dir,"erap2_overexpression_go_mf_GSEA_pval_0.05.txt"))
+
+```
+
+
+- Perform C2 GO:CC gene set enrichment
+
+```{r}
+
+require("msigdbr")
+require("fgsea")
+require("parallel")
+
+go_cc_gene_sets = msigdbr(species = "human", category = "C5", subcategory = "GO:CC")
+
+msigdbr_list = split(x = go_cc_gene_sets$gene_symbol, f = go_cc_gene_sets$gs_name)
+
+
+all_de_df_split <- split(all_de_df, all_de_df$contrasts)
+
+
+go_cc_gsea_df_list <- lapply(all_de_df_split, function(temp_df){
+    temp_non_na_df <- temp_df[!is.na(temp_df$gene_name) & !is.na(temp_df$logfc) & !is.na(temp_df$padj),]
+    temp_non_na_df$ranks <- rank(temp_non_na_df$logfc)
+    temp_non_na_df <- temp_non_na_df[order(temp_non_na_df$logfc, decreasing = T),]
+    a_vector <- temp_non_na_df$ranks
+    names(a_vector) <- temp_non_na_df$gene_name
+    fgsea(msigdbr_list, a_vector, maxSize = 500)
+})
+
+
+significant_go_cc_gsea_df_list <- lapply(go_cc_gsea_df_list, function(temp_df){
+    temp_df[temp_df$pval < 0.05 & !is.na(temp_df$log2err),]
+})
+
+
+all_significant_go_cc_gsea_df <- do.call(rbind, lapply(names(significant_go_cc_gsea_df_list), function(x){
+    temp_df <- as.data.frame(significant_go_cc_gsea_df_list[[x]])
+    temp_df$contrast <- x
+    return(temp_df)
+}))
+
+saveRDS(object = all_significant_go_cc_gsea_df, file = file.path(rdata_dir, "03_erap2_overexpression_go_cc_GSEA_pval_0.05.rds"))
+write.table(x = all_significant_go_cc_gsea_df[,-8], sep = "\t", quote = F, col.names = T, row.names = F, file = file.path(output_dir,"erap2_overexpression_go_cc_GSEA_pval_0.05.txt"))
+
+```
+
+
+- Perform C2 GO:BP gene set enrichment
+
+```{r}
+
+require("msigdbr")
+require("fgsea")
+require("parallel")
+
+go_bp_gene_sets = msigdbr(species = "human", category = "C5", subcategory = "GO:BP")
+
+msigdbr_list = split(x = go_bp_gene_sets$gene_symbol, f = go_bp_gene_sets$gs_name)
+
+
+all_de_df_split <- split(all_de_df, all_de_df$contrasts)
+
+
+go_bp_gsea_df_list <- lapply(all_de_df_split, function(temp_df){
+    temp_non_na_df <- temp_df[!is.na(temp_df$gene_name) & !is.na(temp_df$logfc) & !is.na(temp_df$padj),]
+    temp_non_na_df$ranks <- rank(temp_non_na_df$logfc)
+    temp_non_na_df <- temp_non_na_df[order(temp_non_na_df$logfc, decreasing = T),]
+    a_vector <- temp_non_na_df$ranks
+    names(a_vector) <- temp_non_na_df$gene_name
+    fgsea(msigdbr_list, a_vector, maxSize = 200)
+})
+
+
+significant_go_bp_gsea_df_list <- lapply(go_bp_gsea_df_list, function(temp_df){
+    temp_df[temp_df$pval < 0.05 & !is.na(temp_df$log2err),]
+})
+
+
+all_significant_go_bp_gsea_df <- do.call(rbind, lapply(names(significant_go_bp_gsea_df_list), function(x){
+    temp_df <- as.data.frame(significant_go_bp_gsea_df_list[[x]])
+    temp_df$contrast <- x
+    return(temp_df)
+}))
+
+saveRDS(object = all_significant_go_bp_gsea_df, file = file.path(rdata_dir, "03_erap2_overexpression_go_bp_GSEA_pval_0.05.rds"))
+write.table(x = all_significant_go_bp_gsea_df[,-8], sep = "\t", quote = F, col.names = T, row.names = F, file = file.path(output_dir,"erap2_overexpression_go_bp_GSEA_pval_0.05.txt"))
+
+```
+
+- Perform C2 Human phenotype ontology gene set enrichment
+
+```{r}
+
+require("msigdbr")
+require("fgsea")
+require("parallel")
+
+hpo_gene_sets = msigdbr(species = "human", category = "C5", subcategory = "HPO")
+
+msigdbr_list = split(x = hpo_gene_sets$gene_symbol, f = hpo_gene_sets$gs_name)
+
+
+all_de_df_split <- split(all_de_df, all_de_df$contrasts)
+
+
+hpo_gsea_df_list <- lapply(all_de_df_split, function(temp_df){
+    temp_non_na_df <- temp_df[!is.na(temp_df$gene_name) & !is.na(temp_df$logfc) & !is.na(temp_df$padj),]
+    temp_non_na_df$ranks <- rank(temp_non_na_df$logfc)
+    temp_non_na_df <- temp_non_na_df[order(temp_non_na_df$logfc, decreasing = T),]
+    a_vector <- temp_non_na_df$ranks
+    names(a_vector) <- temp_non_na_df$gene_name
+    fgsea(msigdbr_list, a_vector, maxSize = 200)
+})
+
+
+significant_hpo_gsea_df_list <- lapply(hpo_gsea_df_list, function(temp_df){
+    temp_df[temp_df$pval < 0.05 & !is.na(temp_df$log2err),]
+})
+
+
+all_significant_hpo_gsea_df <- do.call(rbind, lapply(names(significant_hpo_gsea_df_list), function(x){
+    temp_df <- as.data.frame(significant_hpo_gsea_df_list[[x]])
+    temp_df$contrast <- x
+    return(temp_df)
+}))
+
+saveRDS(object = all_significant_hpo_gsea_df, file = file.path(rdata_dir, "03_erap2_overexpression_hpo_GSEA_pval_0.05.rds"))
+write.table(x = all_significant_hpo_gsea_df[,-8], sep = "\t", quote = F, col.names = T, row.names = F, file = file.path(output_dir,"erap2_overexpression_hpo_GSEA_pval_0.05.txt"))
+
+```
+
+
+- Perform C2 Hallmark gene set enrichment
+
+```{r}
+
+require("msigdbr")
+require("fgsea")
+require("parallel")
+
+hallmark_gene_sets = msigdbr(species = "human", category = "H")
+
+msigdbr_list = split(x = hallmark_gene_sets$gene_symbol, f = hallmark_gene_sets$gs_name)
+
+
+all_de_df_split <- split(all_de_df, all_de_df$contrasts)
+
+
+hallmark_gsea_df_list <- lapply(all_de_df_split, function(temp_df){
+    temp_non_na_df <- temp_df[!is.na(temp_df$gene_name) & !is.na(temp_df$logfc) & !is.na(temp_df$padj),]
+    temp_non_na_df$ranks <- rank(temp_non_na_df$logfc)
+    temp_non_na_df <- temp_non_na_df[order(temp_non_na_df$logfc, decreasing = T),]
+    a_vector <- temp_non_na_df$logfc
+    names(a_vector) <- temp_non_na_df$gene_name
+    fgsea(msigdbr_list, a_vector, maxSize = 200)
+})
+
+
+significant_hallmark_gsea_df_list <- lapply(hallmark_gsea_df_list, function(temp_df){
+    temp_df[temp_df$pval < 0.05 & !is.na(temp_df$log2err),]
+})
+
+
+all_significant_hallmark_gsea_df <- do.call(rbind, lapply(names(significant_hallmark_gsea_df_list), function(x){
+    temp_df <- as.data.frame(significant_hallmark_gsea_df_list[[x]])
+    temp_df$contrast <- x
+    return(temp_df)
+}))
+
+saveRDS(object = all_significant_hallmark_gsea_df, file = file.path(rdata_dir, "03_erap2_overexpression_hallmark_GSEA_pval_0.05.rds"))
+write.table(x = all_significant_hallmark_gsea_df[,-8], sep = "\t", quote = F, col.names = T, row.names = F, file = file.path(output_dir,"erap2_overexpression_hallmark_GSEA_pval_0.05.txt"))
+
+```

@@ -1,0 +1,706 @@
+---
+title:Gene set enrichment results from ERAP2 KD proteomics
+output:pdf_document
+---
+
+
+### Main questions
+
+We set out to understand the role of hypoxia in astrocytes.
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/nemo/lab/luscomben/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis` and include required packages
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/nemo/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis")
+require("stringr")
+require("DESeq2")
+require("PCAtools")
+require("rtracklayer")
+require("stringr")
+require("ggplot2")
+require("RColorBrewer")
+unloadNamespace("enrichR")
+library("enrichR")
+require("msigdbr")
+require("clusterProfiler")
+require("org.Hs.eg.db")
+# source("useful_functions/plot_utils.R")
+require("enrichplot")
+
+```
+
+- Set paths
+
+```{r}
+
+analysis_path <- "14-erap2-kd-proteomics/"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+
+dir.create(save_dir)
+dir.create(plot_dir)
+dir.create(input_dir)
+dir.create(output_dir)
+
+
+```
+
+
+
+### Load annotation file
+
+- Load ensembl annotation gtf
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+require("rtracklayer")
+annotation_gtf <- "/nemo/lab/patanir/home/users/palk/Genomes/ENSEMBL_hg38/Homo_sapiens.GRCh38.104.chr_patch_hapl_scaff.gtf"
+annotation_ranges <- import.gff2(annotation_gtf)
+annotation_gene_ranges <- annotation_ranges[annotation_ranges$type == "gene"]
+
+```
+
+- Load significantly differentially enriched proteins
+
+```{r}
+
+significant_events_df <- readRDS(file.path(save_dir, "02-03-significantly-affected-proteins.rds"))
+pairwise_group_sig_df <- readRDS(file.path(save_dir, "02-04-pairwise-grouped-significantly-affected-proteins.rds"))
+
+```
+
+### 5.0 Perform gene set enrichment
+
+- Perform gene set enrichment of proteins using `enrichr`
+
+```{r}
+
+protein_split <- split(significant_events_df, significant_events_df$comparison)
+protein_split <- protein_split[c("VCP_CTRL_vs_CTRL_CTRL", "VCP_ERAP2_vs_CTRL_ERAP2")]
+
+dbs <- "GO_Biological_Process_2023"
+groups <- names(protein_split)
+directions <- c("up", "down")
+kd_geneset_enrichment_df <- do.call(rbind, lapply(groups, function(a_group){
+    a_temp_df <- protein_split[[a_group]]
+    return_df <- do.call(rbind, lapply(directions, function(a_direction){
+            db_df_list <- lapply(dbs, function(a_database){
+                message(paste(a_database, a_direction, a_group))
+                current_fcs <- a_temp_df$logfc[a_temp_df$direction == a_direction]
+                current_genes <- a_temp_df$protein_name[a_temp_df$direction == a_direction]
+                an_enrichment_df <- enrichr(current_genes,  a_database)[[1]]
+                if(nrow(an_enrichment_df) == 0){
+                    return(NULL)
+                }
+                an_enrichment_df$direction <- a_direction
+                an_enrichment_df$num_gene <- length(current_genes)
+                an_enrichment_df$db <- a_database
+                Sys.sleep(5)
+                return(an_enrichment_df)
+            })
+            db_df <- do.call(rbind, db_df_list)
+        }))
+    return_df$contrasts <- a_group
+    return(return_df)
+}))
+
+kd_geneset_enrichment_df$gene_ratio <- vapply(kd_geneset_enrichment_df$Overlap, function(x){
+    eval(parse(text = x))
+},1)
+
+
+significant_gene_set_enrichment <- kd_geneset_enrichment_df[kd_geneset_enrichment_df$P.value < 0.05,]
+
+
+pdf(file = file.path(plot_dir, "03-01-gene-set-enrichments-for-differentially-enriched-proteins.pdf"))
+groups <- unique(kd_geneset_enrichment_df$contrasts)
+directions <- c("up", "down")
+lapply(unique(kd_geneset_enrichment_df$db), function(a_database){
+    lapply(groups, function(a_group){
+        lapply(directions, function(a_direction){
+            message(a_group, a_database)
+            current_n <- unique(kd_geneset_enrichment_df[
+                kd_geneset_enrichment_df$contrasts == a_group &
+                kd_geneset_enrichment_df$direction == a_direction &
+                kd_geneset_enrichment_df$db == a_database, "num_gene"])
+            plot_df <- kd_geneset_enrichment_df[kd_geneset_enrichment_df$P.value < 0.05 &
+                kd_geneset_enrichment_df$contrasts == a_group &
+                kd_geneset_enrichment_df$db == a_database &
+                kd_geneset_enrichment_df$direction == a_direction,]
+            if(nrow(plot_df) > 0){
+                plotEnrich(plot_df, showTerms = 10, numChar = 50, y = "Ratio", orderBy = "Combined.Score", title = paste(a_database, paste("\n",a_group), a_direction, "N=",current_n))
+            }else{
+                return(NULL)
+            }
+        })
+    })
+})
+dev.off()
+
+```
+
+- Map Entrez IDs to Ensembl IDs
+
+```{r}
+
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+
+all_differentially_expressed_with_entrez <- do.call(rbind, lapply(differential_protein_enrichment_df, function(temp_df){
+    temp_df$entrez_id = mapIds(org.Hs.eg.db,
+        keys=temp_df$protein_name,
+        column="ENTREZID",
+        keytype="SYMBOL",
+        multiVals="first")
+    return(temp_df)
+}))
+rownames(all_differentially_expressed_with_entrez) <- NULL
+all_differentially_expressed_with_entrez_split <- split(all_differentially_expressed_with_entrez, all_differentially_expressed_with_entrez$comparison)[c("CTRL_ERAP2_vs_CTRL_CTRL", "VCP_ERAP2_vs_VCP_CTRL")]
+conditional_differentially_expressed_with_entrez_split <- split(all_differentially_expressed_with_entrez, all_differentially_expressed_with_entrez$comparison)[c("VCP_CTRL_vs_CTRL_CTRL", "VCP_ERAP2_vs_CTRL_ERAP2")]
+
+
+```
+
+
+- Perform GSEA for treatment and condition effects
+
+```{r}
+
+require("msigdbr")
+require("fgsea")
+require("parallel")
+require("hypeR")
+
+.handle.genesets <- function(genesets) {
+    if (is(genesets, "list")) {
+        gsets.obj <- gsets$new(genesets, quiet=TRUE)
+    }
+    else if (is(genesets, "gsets") | is(genesets, "rgsets")) {
+        gsets.obj <- genesets
+    } 
+    else {
+        stop("Genesets must be gsets/rgsets object or named list of genesets")
+    }
+    return(gsets.obj)
+}
+
+fgsea.wrapper <- function(signature, genesets, sample.size=101, min.size=1, max.size=Inf, ...) {
+    # Save original arguments
+    args <- as.list(environment())
+    
+    # Save gsets object
+    gsets.obj <- .handle.genesets(genesets)
+    args$genesets <- gsets.obj
+    
+    # Run fgsea
+    results <- fgsea::fgseaMultilevel(stats=signature, 
+                                      pathways=gsets.obj$genesets, 
+                                      sampleSize=sample.size, 
+                                      minSize=min.size, 
+                                      maxSize=max.size, 
+                                      ...)
+    data <- results %>%
+        data.frame() %>%
+        plyr::rename(c("pathway"="label", "padj"="fdr", "log2err"="lte", "size"="overlap", "leadingEdge"="le")) %>%
+        dplyr::rename_with(tolower) %>%
+        mutate(pval=signif(pval, 2)) %>%
+        mutate(fdr=signif(fdr, 2)) %>%
+        mutate(le=sapply(le, function(x) paste(x, collapse=','))) %>%
+        mutate(signature=length(signature)) %>%
+        mutate(geneset=sapply(label, function(x) length(gsets.obj$genesets[[x]]))) %>%
+        dplyr::select(c("label", "pval", "fdr", "lte", "es", "nes", "signature", "geneset", "overlap", "le"))
+    
+    data.up <- data %>%
+        dplyr::filter(es > 0) %>%
+        dplyr::arrange(pval, es)
+
+    data.dn <- data %>%
+        dplyr::filter(es < 0) %>%
+        dplyr::arrange(pval, es)    
+
+    # Reproducibility information
+    info <- list(fgsea=paste("v", packageVersion("fgsea"), sep=""),
+                 signature=length(signature), 
+                 genesets=args$genesets$info())
+    
+    info <- c(info, args[c("sample.size", "min.size", "max.size")])
+    info <- lapply(info, as.character)
+    
+    # Wrap dataframe in hyp object
+    hyp.up <- hyp$new(data=data.up, args=args, info=info)
+    hyp.dn <- hyp$new(data=data.dn, args=args, info=info)
+    mhyp <- multihyp$new(data=list("up"=hyp.up, "dn"=hyp.dn))
+    return(mhyp)
+}
+
+biological_process <-  enrichr_gsets("GO_Biological_Process_2023")
+molecular_function <-  enrichr_gsets("GO_Molecular_Function_2023")
+cellular_component <-  enrichr_gsets("GO_Cellular_Component_2023")
+hmdb_metabolites <- enrichr_gsets("HMDB_Metabolites")
+
+pdf(file = file.path(plot_dir, "06-01-01-GSEA-biological-process-for-treatment-effect.pdf"))
+lapply(all_differentially_expressed_with_entrez_split, function(temp_df){
+    a_vector <- temp_df$logfc
+    names(a_vector) <- temp_df$protein_name
+    mhyp_obj <- fgsea.wrapper(a_vector, biological_process, max.size = 100)
+    hyp_dots(mhyp_obj, 
+        merge=TRUE, 
+        top = 20, 
+        size_by = "significance", 
+        val = "pval", 
+        title = paste("GO biological process", unique(temp_df$comparison)), 
+        pval = 0.05)
+})
+dev.off()
+
+pdf(file = file.path(plot_dir, "06-01-02-GSEA-biological-process-for-condition-effect.pdf"))
+lapply(conditional_differentially_expressed_with_entrez_split, function(temp_df){
+    a_vector <- temp_df$logfc
+    names(a_vector) <- temp_df$protein_name
+    mhyp_obj <- fgsea.wrapper(a_vector, biological_process, max.size = 100)
+    hyp_dots(mhyp_obj, 
+        merge=TRUE, 
+        top = 10, 
+        size_by = "significance", 
+        val = "pval", 
+        title = paste("GO biological process", unique(temp_df$comparison)), 
+        pval = 0.05)
+})
+dev.off()
+
+pdf(file = file.path(plot_dir, "06-02-01-GSEA-cellular-component-for-treatment-effect.pdf"))
+lapply(all_differentially_expressed_with_entrez_split, function(temp_df){
+    a_vector <- temp_df$logfc
+    names(a_vector) <- temp_df$protein_name
+    mhyp_obj <- fgsea.wrapper(a_vector, cellular_component, max.size = 100)
+    hyp_dots(mhyp_obj, 
+        merge=TRUE, 
+        top = 20, 
+        size_by = "significance", 
+        val = "pval", 
+        title = paste("GO cellular component", unique(temp_df$comparison)), 
+        pval = 0.05)
+})
+dev.off()
+
+pdf(file = file.path(plot_dir, "06-02-02-GSEA-cellular-component-for-condition-effect.pdf"))
+lapply(conditional_differentially_expressed_with_entrez_split, function(temp_df){
+    a_vector <- temp_df$logfc
+    names(a_vector) <- temp_df$protein_name
+    mhyp_obj <- fgsea.wrapper(a_vector, cellular_component, max.size = 100)
+    hyp_dots(mhyp_obj, 
+        merge=TRUE, 
+        top = 20, 
+        size_by = "significance", 
+        val = "pval", 
+        title = paste("GO cellular component", unique(temp_df$comparison)), 
+        pval = 0.05)
+})
+dev.off()
+
+pdf(file = file.path(plot_dir, "06-03-01-GSEA-molecular-function-for-treatment-effect.pdf"))
+lapply(all_differentially_expressed_with_entrez_split, function(temp_df){
+    a_vector <- temp_df$logfc
+    names(a_vector) <- temp_df$protein_name
+    mhyp_obj <- fgsea.wrapper(a_vector, molecular_function, max.size = 100)
+    hyp_dots(mhyp_obj, 
+        merge=TRUE, 
+        top = 20, 
+        size_by = "significance", 
+        val = "pval", 
+        title = paste("GO molecular function", unique(temp_df$comparison)), 
+        pval = 0.05)
+})
+dev.off()
+
+pdf(file = file.path(plot_dir, "06-03-02-GSEA-molecular-function-for-condition-effect.pdf"))
+lapply(conditional_differentially_expressed_with_entrez_split, function(temp_df){
+    a_vector <- temp_df$logfc
+    names(a_vector) <- temp_df$protein_name
+    mhyp_obj <- fgsea.wrapper(a_vector, molecular_function, max.size = 100)
+    hyp_dots(mhyp_obj, 
+        merge=TRUE, 
+        top = 20, 
+        size_by = "significance", 
+        val = "pval", 
+        title = paste("GO molecular function", unique(temp_df$comparison)), 
+        pval = 0.05)
+})
+dev.off()
+
+
+pdf(file = file.path(plot_dir, "06-04-01-GSEA-hmdb-metabolites-for-treatment-effect.pdf"))
+lapply(all_differentially_expressed_with_entrez_split, function(temp_df){
+    a_vector <- temp_df$logfc
+    names(a_vector) <- temp_df$protein_name
+    mhyp_obj <- fgsea.wrapper(a_vector, hmdb_metabolites)
+    hyp_dots(mhyp_obj, 
+        merge=TRUE, 
+        top = 20, 
+        size_by = "significance", 
+        val = "pval", 
+        title = paste("HMDB Metabolites", unique(temp_df$comparison)), 
+        pval = 0.05)
+})
+dev.off()
+
+pdf(file = file.path(plot_dir, "06-04-02-GSEA-hmdb-metabolites-for-condition-effect.pdf"))
+lapply(conditional_differentially_expressed_with_entrez_split, function(temp_df){
+    a_vector <- temp_df$logfc
+    names(a_vector) <- temp_df$protein_name
+    mhyp_obj <- fgsea.wrapper(a_vector, hmdb_metabolites)
+    hyp_dots(mhyp_obj, 
+        merge=TRUE, 
+        top = 20, 
+        size_by = "significance", 
+        val = "pval", 
+        title = paste("HMDB Metabolites", unique(temp_df$comparison)), 
+        pval = 0.05)
+})
+dev.off()
+
+
+```
+
+- fetch metabolite information
+
+
+```{r}
+
+require("hmdbQuery")
+require("httr")
+
+
+extract_dataframe <- function(object){
+    up_object <- object$data$up$data
+    up_labels <- up_object[up_object$pval < 0.05 & !is.na(up_object$pval),"label"]
+    up_ids <- vapply(str_extract_all(string = up_labels, pattern = "(?<=\\()(.*?)(?=\\))"), function(x){x[length(x)]},"1")
+    down_object <- object$data$dn$data
+    dn_labels <- down_object[down_object$pval < 0.05 & !is.na(down_object$pval),"label"]
+    dn_ids <- vapply(str_extract_all(string = dn_labels, pattern = "(?<=\\()(.*?)(?=\\))"), function(x){x[length(x)]},"1")
+
+    all_df <- rbind(
+        up_object[up_object$pval < 0.05 & !is.na(up_object$pval),], 
+        down_object[down_object$pval < 0.05 & !is.na(down_object$pval),])
+    all_ids <- c(up_ids, dn_ids)
+    all_df$ids <- all_ids
+    return(all_df)
+}
+
+metabolite_list <- lapply(conditional_differentially_expressed_with_entrez_split, function(temp_df){
+    a_vector <- temp_df$logfc
+    names(a_vector) <- temp_df$protein_name
+    mhyp_obj <- fgsea.wrapper(a_vector, hmdb_metabolites)
+})
+
+HMDB_entry_list <- lapply(metabolite_list, function(temp_object){
+    up_object <- temp_object$data$up$data
+    up_labels <- up_object[up_object$pval < 0.05,"label"]
+    up_ids <- vapply(str_extract_all(string = up_labels, pattern = "(?<=\\()(.*?)(?=\\))"), function(x){x[length(x)]},"1")
+    down_object <- temp_object$data$dn$data
+    dn_labels <- down_object[down_object$pval < 0.05,"label"]
+    dn_ids <- vapply(str_extract_all(string = dn_labels, pattern = "(?<=\\()(.*?)(?=\\))"), function(x){x[length(x)]},"1")
+
+
+    all_df <- rbind(up_object, down_object)
+    all_ids <- c(up_ids, dn_ids)
+    all_df$hmdb_ids <- all_ids
+
+    entry_list <- lapply(all_ids, function(x){
+        # if(str_length(x) < 11){
+        #     sub_id <- str_sub(string = x, start = 5, end = str_length(x))
+        #     new_id <- paste("HMDB", paste(rep(0, 11 - (4+str_length(sub_id))), collapse = ""), sub_id, sep = "")
+        # }
+        message(x)
+        active_url <- GET(paste("http://www.hmdb.ca/metabolites/", x, sep = "/"))[["url"]]
+        new_id <- basename(active_url)
+        err <- T
+        while(err == T){
+            try_out <- try(expr = HmdbEntry(prefix = "http://www.hmdb.ca/metabolites/", 
+               id = new_id, keepFull = T))
+            if(class(try_out) %in% "HmdbEntry"){
+                err <- F
+            }
+        }
+        return(try_out)
+    })
+    names(entry_list) <- all_ids
+
+    entry_list
+})
+
+metabolite_and_hmdb_entry_list <- lapply(seq_along(metabolite_list), function(x){
+    temp_object <- metabolite_list[[x]]
+    sig_metabolite_df <- extract_dataframe(temp_object)
+    entry_list <- HMDB_entry_list[[x]]
+    list(enriched_metabolites = sig_metabolite_df, hmdb_entries = entry_list)
+})
+
+saveRDS(object = metabolite_and_hmdb_entry_list, file = file.path(save_dir, "03-metabolite-and-hmdb-entries-together.rds"))
+
+```
+- Fetch the conditional effect for each biological process, cellular component and molecular function
+
+```{r}
+
+
+biological_process <-  enrichr_gsets("GO_Biological_Process_2023")
+biological_process_list <- lapply(conditional_differentially_expressed_with_entrez_split, function(temp_df){
+    a_vector <- temp_df$logfc
+    names(a_vector) <- temp_df$protein_name
+    mhyp_obj <- fgsea.wrapper(a_vector, biological_process)
+    return(extract_dataframe(mhyp_obj))
+})
+
+cellular_component <-  enrichr_gsets("GO_Cellular_Component_2023")
+cellular_component_list <- lapply(conditional_differentially_expressed_with_entrez_split, function(temp_df){
+    a_vector <- temp_df$logfc
+    names(a_vector) <- temp_df$protein_name
+    mhyp_obj <- fgsea.wrapper(a_vector, cellular_component)
+    return(extract_dataframe(mhyp_obj))
+})
+
+molecular_function <-  enrichr_gsets("GO_Molecular_Function_2023")
+molecular_function_list <- lapply(conditional_differentially_expressed_with_entrez_split, function(temp_df){
+    a_vector <- temp_df$logfc
+    names(a_vector) <- temp_df$protein_name
+    mhyp_obj <- fgsea.wrapper(a_vector, molecular_function)
+    return(extract_dataframe(mhyp_obj))
+})
+
+hmdb_metabolites <- enrichr_gsets("HMDB_Metabolites")
+hmdb_metabolites_list <- lapply(conditional_differentially_expressed_with_entrez_split, function(temp_df){
+    a_vector <- temp_df$logfc
+    names(a_vector) <- temp_df$protein_name
+    mhyp_obj <- fgsea.wrapper(a_vector, hmdb_metabolites)
+    return(extract_dataframe(mhyp_obj))
+})
+
+
+lipid_groups <- c("HMDB00031" = "ST", "HMDB01206" = "FA", "HMDB07855" = "GP",
+    "HMDB07853" = "GP", "HMDB07854" = "GP", "HMDB07849" = "GP", "HMDB07852" = "GP",
+    "HMDB07856" = "GP", "HMDB07850" = "GP", "HMDB00725" = "FA")
+
+hmdb_metabolites_list <- lapply(hmdb_metabolites_list, function(temp_df){
+    temp_df$lipid_group <- ""
+    temp_df$lipid_group[match(names(lipid_groups), temp_df$ids)] <- lipid_groups
+    return(temp_df)
+})
+
+saveRDS(object = list(biological_process = biological_process_list, 
+    cellular_component = cellular_component_list,
+    molecular_function = molecular_function_list), file = file.path(save_dir, "03-gobp-cc-mf-hmdb-gene-set-enrichment.rds"))
+
+```
+
+- compute jaccard index
+
+```{r}
+
+require("factoextra")
+require("NbClust")
+
+make_similarity_index <- function(x_list, y_list){
+    a_matrix <- matrix(data = 0, nrow = length(y_list), ncol = length(x_list))
+    pairs_matrix <- cbind(
+        y = rep(x = seq_len(nrow(a_matrix)), times = ncol(a_matrix)), 
+        x = rep(x = seq_len(ncol(a_matrix)), each = nrow(a_matrix)))
+    similarity_value <- vapply(seq_len(nrow(pairs_matrix)), function(x){
+        all_y <- do.call(c, y_list)
+        current_y <- y_list[[ pairs_matrix[x,"y"] ]]
+        all_x <- do.call(c, x_list)
+        current_x <- x_list[[ pairs_matrix[x,"x"] ]]
+
+        intersect_length <- length(intersect(current_x, current_y))
+        # union_of_all <- union(all_x, all_y)
+
+        # in_x_and_y <- length(union_of_all[union_of_all %in% current_x & union_of_all %in% current_y])
+        # in_x_not_y <- length(union_of_all[(union_of_all %in% current_x) & !(union_of_all %in% current_y)])
+        # in_y_not_x <- length(union_of_all[!(union_of_all %in% current_x) & (union_of_all %in% current_y)])
+        # not_in_y_and_x <- length(union_of_all[!(union_of_all %in% current_x) & !(union_of_all %in% current_y)])
+
+        # cont_matrix <- matrix(data = c(in_x_and_y, in_x_not_y, in_y_not_x, not_in_y_and_x), nrow = 2, ncol = 2)
+
+        # fisher.test(cont_matrix, alternative = "greater")$p.value
+        return(intersect_length / length(current_x))
+    },1)
+    a_matrix[pairs_matrix] <- similarity_value
+    return_matrix <- t(a_matrix)
+    return(return_matrix)
+}
+
+metabolite_and_hmdb_entry_list <- readRDS(file.path(save_dir, "03-metabolite-and-hmdb-entries-together.rds"))
+clustered_similarity_df <- do.call(rbind, lapply(seq_along(metabolite_and_hmdb_entry_list), function(x){
+    enriched_metabolites_df <- metabolite_and_hmdb_entry_list[[x]]$enriched_metabolites
+    enriched_bp_df <- biological_process_list[[x]]
+    enriched_cc_df <- cellular_component_list[[x]]
+    enriched_mf_df <- molecular_function_list[[x]]
+
+    enriched_metabolites_df$db <- "HMDB"
+    enriched_bp_df$db <- "GO:BP"
+    enriched_cc_df$db <- "GO:CC"
+    enriched_mf_df$db <- "GO:MF"
+
+    all_enriched_df <- rbind(enriched_metabolites_df, 
+        enriched_bp_df, enriched_cc_df, enriched_mf_df)
+
+    gene_list <- str_split(string = all_enriched_df$le, pattern = ",")
+    similarity_matrix <- make_similarity_index(gene_list, gene_list)
+
+    # metabo_gene_list <- str_split(string = enriched_metabolites_df$le, pattern = ",")
+    # bp_gene_list <- str_split(string = enriched_bp_df$le, pattern = ",")
+    # cc_gene_list <- str_split(string = enriched_cc_df$le, pattern = ",")
+    # mf_gene_list <- str_split(string = enriched_mf_df$le, pattern = ",")
+
+    # metabo_bp_matrix <- make_similarity_index(metabo_gene_list, bp_gene_list)
+    # metabo_cc_matrix <- make_similarity_index(metabo_gene_list, cc_gene_list)
+    # metabo_mf_matrix <- make_similarity_index(metabo_gene_list, mf_gene_list)
+
+    # metabo_bp_zscore_matrix <- t((t(metabo_bp_matrix) - mean(metabo_bp_matrix)) / sd(metabo_bp_matrix))
+    # metabo_cc_zscore_matrix <- t((t(metabo_cc_matrix) - mean(metabo_cc_matrix)) / sd(metabo_cc_matrix))
+    # metabo_mf_zscore_matrix <- t((t(metabo_mf_matrix) - mean(metabo_mf_matrix)) / sd(metabo_mf_matrix))
+
+    clustering <- hclust(as.dist(1 - similarity_matrix), method = "ward.D2")
+    all_cluster_df <- do.call(rbind, lapply(seq(from = 3, to = 100), function(y){
+        clusters <- cutree(clustering, y)
+        cluster_split <- split(seq_len(nrow(similarity_matrix)), clusters)
+        cluster_df <- do.call(rbind, lapply(cluster_split, function(y1){
+            current_matrix <- similarity_matrix[y1, y1]
+            sub_matrix <- current_matrix[upper.tri(current_matrix, diag = F)]
+            return(data.frame(hmdb_present = "HMDB" %in% unique(all_enriched_df$db[y1]),
+                num_db = length(unique(all_enriched_df$db[y1])),
+                cluster_size = length(y1), 
+                mean_similarity = mean(sub_matrix), 
+                prop_zeros = length(sub_matrix[sub_matrix == 0]) / length(sub_matrix)))
+        }))
+        cluster_df$tree_level <- y
+        cluster_df$cluster <- as.numeric(names(cluster_split))
+        return(cluster_df)
+    }))
+    keep_clusters_df <- all_cluster_df[all_cluster_df$hmdb_present & all_cluster_df$mean_similarity != 0,]
+    selected_hmdb_to_term_map_df <- do.call(rbind, lapply(unique(keep_clusters_df$tree_level), function(y){
+        current_row <- keep_clusters_df[keep_clusters_df$tree_level == y,]
+        clusters <- cutree(clustering, y)
+        cluster_split <- split(seq_len(nrow(all_enriched_df)), clusters)
+        cluster_df <- do.call(rbind, lapply(current_row$cluster, function(y1){
+            current_enriched_df <- all_enriched_df[cluster_split[[y1]],]
+            current_matrix <- similarity_matrix[cluster_split[[y1]], cluster_split[[y1]]]
+            rownames(current_matrix) <- current_enriched_df$ids
+            colnames(current_matrix) <- current_enriched_df$ids
+            melt_df <- reshape2::melt(current_matrix)
+            colnames(melt_df) <- c("xaxis", "yaxis", "similarity")
+            melt_df$x_db <- current_enriched_df$db[match(melt_df$xaxis, current_enriched_df$ids)]
+            melt_df$y_db <- current_enriched_df$db[match(melt_df$yaxis, current_enriched_df$ids)]
+            return(melt_df)
+        }))
+    }))
+
+    unique_df <- unique(selected_hmdb_to_term_map_df[selected_hmdb_to_term_map_df[,1] != selected_hmdb_to_term_map_df[,2] & 
+        selected_hmdb_to_term_map_df[,"x_db"] == "HMDB" & 
+        selected_hmdb_to_term_map_df[,"y_db"] != "HMDB" &
+        selected_hmdb_to_term_map_df[,"similarity"] != 0,])
+    unique_df$x_nes <- all_enriched_df$nes[match(unique_df$xaxis, all_enriched_df$ids)]
+    unique_df$x_direction <- ifelse(unique_df$x_nes < 0, "down", "up")
+    unique_df$y_nes <- all_enriched_df$nes[match(unique_df$yaxis, all_enriched_df$ids)]
+    unique_df$y_direction <- ifelse(unique_df$y_nes < 0, "down", "up")
+    unique_df$xlabel <- all_enriched_df$label[match(unique_df$xaxis, all_enriched_df$ids)]
+    unique_df$ylabel <- all_enriched_df$label[match(unique_df$yaxis, all_enriched_df$ids)]
+    unique_df$condition <- names(conditional_differentially_expressed_with_entrez_split)[x]
+    return(unique_df)
+}))
+
+```
+
+- Fetch all lipid ids 
+
+```{r}
+
+lapply(split(clustered_similarity_df, clustered_similarity_df$condition), function(temp_df){
+    unique(temp_df$xaxis)
+})
+
+lipid_groups <- c("HMDB00031" = "ST", "HMDB01206" = "FA", "HMDB07855" = "GP",
+    "HMDB07853" = "GP", "HMDB07854" = "GP", "HMDB07849" = "GP", "HMDB07852" = "GP",
+    "HMDB07856" = "GP", "HMDB07850" = "GP", "HMDB00725" = "FA")
+
+```
+
+- plot clustering results
+
+
+```{r}
+
+clustered_similarity_df$lipid_group <- lipid_groups[clustered_similarity_df$xaxis]
+clustered_similarity_df$lipid_group[is.na(clustered_similarity_df$lipid_group)] <- ""
+clustered_similarity_df$xaxis <- paste(clustered_similarity_df$lipid_group, clustered_similarity_df$xaxis, sep = "|")
+clustered_similarity_df$yaxis <- paste(clustered_similarity_df$y_db, clustered_similarity_df$yaxis, sep = "|")
+
+
+use_theme <- theme(
+        legend.position = "bottom",
+        text = element_text(size = 12),
+        axis.text.x = element_text(size = 10, angle = 90, hjust = 1),
+        axis.text.y = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(size = 10),
+        plot.background = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(colour = "azure3",
+        linetype = "dashed",
+        size = 0.2))
+
+
+
+lapply(split(clustered_similarity_df, clustered_similarity_df$condition), function(temp_df){
+    message(unique(temp_df$condition))
+    xaxis_similarity <- vapply(split(temp_df$similarity, temp_df$xaxis), median, 1)
+    temp_df$xaxis <- factor(temp_df$xaxis, levels = names(xaxis_similarity)[order(xaxis_similarity, decreasing = T)])
+    
+    yaxis_similarity <- vapply(split(temp_df$similarity, temp_df$yaxis), median, 1)
+    ylabel_similarity <- vapply(split(temp_df$similarity, temp_df$ylabel), median, 1)
+    temp_df$yaxis <- factor(temp_df$yaxis, levels = names(yaxis_similarity)[order(yaxis_similarity, decreasing = T)])
+    temp_df$ylabel <- factor(temp_df$ylabel, levels = names(ylabel_similarity)[order(ylabel_similarity, decreasing = T)])
+
+    keep_temp_df <- temp_df[temp_df$lipid_group != "",]
+    keep_temp_df_split <- split(keep_temp_df, keep_temp_df$y_db)
+
+    plot_temp_df <- do.call(rbind, lapply(keep_temp_df_split, function(x2){
+        return(x2[order(abs(x2$y_nes),decreasing = T),][1:10,])
+    }))
+
+    ThePlot <- ggplot(plot_temp_df, aes(x = ylabel, y = y_nes))
+    ThePlot <- ThePlot + geom_point(aes(fill = y_nes), colour = "#000000", shape = 21)
+    ThePlot <- ThePlot + scale_x_discrete("GO Terms")
+    ThePlot <- ThePlot + scale_y_continuous("Normalised enrichment score")
+    ThePlot <- ThePlot + scale_fill_distiller("nes", palette = "RdBu", direction = 1)
+    # ThePlot <- ThePlot + scale_size_continuous("similarity", limits = c(0,1))
+    ThePlot <- ThePlot + theme_bw()
+    ThePlot <- ThePlot + ggtitle(unique(temp_df$condition))
+    ThePlot <- ThePlot + facet_grid(. ~ y_db)
+    ThePlot <- ThePlot + use_theme
+    ggsave(width = 20, height = 20, file = file.path(plot_dir, paste("07-01" , unique(temp_df$condition), 
+        "plot-nes-of-go-terms.pdf")), ThePlot)
+
+    ThePlot <- ggplot(plot_temp_df, aes(x = xaxis, y = yaxis))
+    ThePlot <- ThePlot + geom_point(aes(fill = similarity, size = similarity), colour = "#000000", shape = 21)
+    ThePlot <- ThePlot + scale_x_discrete("HMDB metabolites")
+    ThePlot <- ThePlot + scale_y_discrete("GO terms")
+    ThePlot <- ThePlot + scale_fill_distiller("similarity", palette = "YlOrRd", direction = 1, limits = c(0,1))
+    ThePlot <- ThePlot + scale_size_continuous("similarity", limits = c(0,1))
+    ThePlot <- ThePlot + theme_bw()
+    ThePlot <- ThePlot + ggtitle(unique(temp_df$condition))
+    ThePlot <- ThePlot + facet_grid(y_db ~ .)
+    ThePlot <- ThePlot + use_theme
+    ggsave(width = 10, height = 20, file = file.path(plot_dir, paste("07-01", unique(temp_df$condition), 
+        "plot-similarity-between-hmdb-metabolites-and-go-terms.pdf")), ThePlot)
+})
+
+saveRDS(object = clustered_similarity_df, file = file.path(save_dir, "04-cluster-hmdb-metabolites-with-go-terms.rds"))
+
+```

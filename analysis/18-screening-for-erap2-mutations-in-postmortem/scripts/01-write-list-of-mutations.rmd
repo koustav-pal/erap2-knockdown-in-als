@@ -1,0 +1,95 @@
+---
+title:Astrocyte reactivity analysis
+output:pdf_document
+---
+
+
+### Main questions
+
+We want to find the mutation statistics for Ben's samples
+
+### 1.0 Package requirements
+
+- Include required packages 
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+require("stringr")
+require("BSgenome.Hsapiens.UCSC.hg38")
+
+```
+
+- change to current working directory `/export2/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis/`.
+
+
+- Set paths
+
+```{r}
+
+setwd("/export2/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis/")
+analysis_path <- "18-screening-for-erap2-mutations-in-postmortem"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+
+dir.create(save_dir)
+dir.create(plot_dir)
+dir.create(input_dir)
+dir.create(output_dir)
+
+```
+
+### 2.0 Include experiment matrix
+
+- Import the list of SNPs and filter for those that are within the ERAP2 gene body
+
+```{r include = FALSE, message = FALSE, warning = FALSE}
+
+mutation_df <- data.table::fread(file.path(input_dir, "snp_result.txt"), data.table = F)
+erap2_location_df <- data.frame(chr = 5, start = 96875984, end = 96919716)
+mutation_df <- mutation_df[mutation_df$pos >= erap2_location_df$start & mutation_df$pos <= erap2_location_df$end,]
+
+```
+
+- Fetch all alt alleles
+
+```{r}
+
+    hg38 <- BSgenome.Hsapiens.UCSC.hg38
+    all_mutation_df <- do.call(rbind, lapply(seq_len(nrow(mutation_df)), function(x){
+        message(x)
+        all_alleles <- str_split(string = mutation_df$variation[x], 
+            pattern = ">", simplify = T)
+        ref_allele <- all_alleles[1,1]
+        alt_alleles <- all_alleles[1,2]
+        if(grepl(x = all_alleles[1,2], pattern = ",")){
+            alt_alleles <- str_split(string = all_alleles[1,2], 
+            pattern = ",", simplify = T)[1,]
+        }
+        # alt_allele_vector <- unique(str_split(string = 
+        #     do.call(c, str_split(string = mutation_df$frequency[x], 
+        #     pattern = "\\|", simplify = F)), pattern = ":", simplify = T)[,1])
+        # fetch_left_seq <- getSeq(hg38, names = paste("chr", mutation_df[x,"#chr"], sep = ""), 
+        #     start = as.numeric(mutation_df$pos[x]) - 10,
+        #     end = as.numeric(mutation_df$pos[x]) - 1)
+        #fetch_left_seq_neg <- getSeq(hg38, names = paste("chr", mutation_df[x,"#chr"], sep = ""), 
+        #    start = as.numeric(mutation_df$pos[x]) - 10,
+        #    end = as.numeric(mutation_df$pos[x]) - 1)
+        # fetch_right_seq <- getSeq(hg38, names = paste("chr", mutation_df[x,"#chr"], sep = ""), 
+        #     start = as.numeric(mutation_df$pos[x]) + 1,
+        #     end = as.numeric(mutation_df$pos[x]) + 10)
+        return_mutation_df <- data.frame(chromosome = mapSeqlevels(paste("chr",mutation_df[x,"#chr"], sep = ""), "ENSEMBL"), 
+            pos = mutation_df[x,"pos"],
+            reference = ref_allele, 
+            alternative = alt_alleles)
+        return(return_mutation_df)
+    }))
+    write.table(x = all_mutation_df[all_mutation_df$alternative != "_",], 
+        file = file.path(input_dir, "01-list-of-mutations.txt"),
+        sep = "\t",
+        quote = F,
+        col.names = F,
+        row.names = F)
+
+```

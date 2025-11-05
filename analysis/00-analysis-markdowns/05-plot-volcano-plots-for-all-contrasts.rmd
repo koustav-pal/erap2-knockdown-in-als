@@ -1,0 +1,131 @@
+---
+title:ERAP2 knockdown in astrocytes
+output:pdf_document
+---
+
+
+### Main questions
+
+We set out to understand the role of ERAP2 in ALS. The main questions that have been defined until now are,
+
+- What is the effect of ERAP2 siRNA in control lines?
+- What is the effect between control and ALS lines? 
+- What is the effect of ERAP2 siRNA on ALS lines? 
+
+### 1.0 Package requirements
+
+- Include required packages 
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/camp/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis")
+require("stringr")
+require("DESeq2")
+require("MASS")
+require("apeglm")
+require("PCAtools")
+require("rtracklayer")
+require("RColorBrewer")
+require("ggrepel")
+source("src/plot_functions.R")
+
+```
+
+
+- change to current working directory `/camp/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis`.
+
+```{r}
+
+setwd("/camp/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis")
+
+rdata_dir <- "02-01-differential-expression-profiling/rdata_files/"
+output_dir <- "02-01-differential-expression-profiling/output_files/"
+input_dir <- "02-01-differential-expression-profiling/input_files/"
+plot_dir <- "02-01-differential-expression-profiling/plots/"
+tmp_dir <- "02-01-differential-expression-profiling/tmp/"
+if(!(file.exists(plot_dir))){
+    dir.create(plot_dir)
+}
+if(!(file.exists(input_dir))){
+    dir.create(input_dir)
+}
+if(!(file.exists(output_dir))){
+    dir.create(output_dir)
+}
+if(!(file.exists(rdata_dir))){
+    dir.create(rdata_dir)
+}
+if(!(file.exists(tmp_dir))){
+    dir.create(tmp_dir)
+}
+
+all_de_genes_df <- readRDS(file.path("02-01-differential-expression-profiling/rdata_files/01-all-differentially-expressed-genes.RDS"))
+
+```
+
+### Load annotation file
+
+- Load ensembl annotation gtf.
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+annotation_gtf <- "/nemo/lab/patanir/home/users/palk/Genomes/ENSEMBL_hg38/Homo_sapiens.GRCh38.104.chr_patch_hapl_scaff.gtf"
+annotation_ranges <- import.gff2(annotation_gtf)
+annotation_gene_ranges <- annotation_ranges[annotation_ranges$type == "gene"]
+
+```
+
+
+- Add gene names 
+
+```{r}
+
+all_de_genes_df$gene_name <- annotation_gene_ranges$gene_name[match(all_de_genes_df$gene_ids, annotation_gene_ranges$gene_id)]
+
+
+
+```
+
+- Add entrez ids
+
+```{r}
+
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+all_de_genes_df$entrez_id = mapIds(org.Hs.eg.db,
+                    keys=all_de_genes_df$gene_ids,
+                    column="ENTREZID",
+                    keytype="ENSEMBL",
+                    multiVals="first")
+
+sig_de_genes_df <- all_de_genes_df[all_de_genes_df$padj < 0.05 & !is.na(all_de_genes_df$padj),]
+
+```
+
+- Make Volcano plots
+
+```{r}
+
+require("ggrepel")
+source("src/plot_functions.R")
+
+lapply(unique(sig_de_genes_df$contrast), function(x){
+    current_sig_df <- sig_de_genes_df[sig_de_genes_df$contrasts == x & !is.na(sig_de_genes_df$gene_name) & !(sig_de_genes_df$gene_name %in% c("CES1", "ISCA2", "ELFN2")),]
+    current_plot_df <- all_de_genes_df[all_de_genes_df$contrasts == x & !is.na(all_de_genes_df$gene_name) & !(all_de_genes_df$gene_name %in% c("CES1", "ISCA2", "ELFN2")),]
+    highlight_genes <- current_sig_df$gene_name[!(current_sig_df$gene_name %in% current_plot_df$gene_name[duplicated(current_plot_df$gene_name)])]
+    label_genes_df <- current_plot_df[current_plot_df$gene_name %in% highlight_genes,]
+    label_genes <- label_genes_df$gene_name[order(label_genes_df$padj, decreasing = F)][1:10]
+
+
+    make_volcano_plot(plot_df = current_plot_df, 
+        logfc_threshold = 2, 
+        logfc_col = "logfc", 
+        gradient_pal = "RdBu", 
+        pval_col = "padj",
+        highlight_genes = highlight_genes,
+        label_genes = label_genes,
+        plot_pvalue_threshold = 0.05,
+        filename = file.path(plot_dir, paste(paste(output_prefix(), x, sep = "_"), ".pdf", sep = "")), plot_width = 7, plot_height = 7)
+})
+
+```

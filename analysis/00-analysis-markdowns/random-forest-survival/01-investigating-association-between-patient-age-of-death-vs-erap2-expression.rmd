@@ -1,0 +1,275 @@
+---
+title:Microsatellite summary analysis
+output:pdf_document
+---
+
+
+### Main questions
+
+Investigate the survival probability of patients using ERAP2 expression
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/export2/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis` and include required packages 
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/export2/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis")
+require("HiCBricks")
+require("GenomicRanges")
+require("stringr")
+# require("Biostrings")
+# require("rtracklayer")
+# require("GenomeInfoDb")
+# require("GenomicFeatures")
+require("ggplot2")
+library(rlang)
+library(survival)
+library(reshape2)
+library(knitr)
+library(rmarkdown)
+require("RColorBrewer")
+require("survminer")
+require("survival")
+
+```
+
+### 2.0 Include experiment matrix
+
+- Let's first import the counts.
+
+```{r include = FALSE, message = FALSE, warning = FALSE}
+
+analysis_path <- "11-postmortem-data-analysis"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+
+dir.create(save_dir, recursive = T)
+dir.create(plot_dir, recursive = T)
+dir.create(input_dir, recursive = T)
+dir.create(output_dir, recursive = T)
+
+```
+
+### 3.0 Imports
+
+- Load penetrance data
+
+```{r}
+
+patient_count_df <- readRDS(file.path(save_dir, "02-summarised-counts-for-patients.rds"))
+
+```
+
+### Analysis
+
+- Prepare data for brain and spinal cord age at death
+
+```{r}
+
+patient_count_df$type <- factor(patient_count_df$type, levels = c("control", "c9orf72-ALS", "other_mutation-fALS", "sporadic"))
+patient_count_df$type_group <- as.character(patient_count_df$type)
+patient_count_df$type_group[patient_count_df$type %in% c("other_mutation-fALS", "sporadic")] <- "sporadic+other_fALS"
+patient_count_df$tissue_group <- "spinal_cord"
+patient_count_df$tissue_group[patient_count_df$tissue %in% c("Cortex", "Cortex_Motor", "Cerebellum")] <- "brain"
+
+patient_surv_df <- do.call(rbind, lapply(split(patient_count_df, paste(patient_count_df$subject_id, patient_count_df$tissue_group)), function(temp_df){
+    # message(unique(temp_df$subject_id))
+    data.frame(subject_id = unique(temp_df$subject_id),
+        tissue_group = unique(temp_df$tissue_group),
+        # tissue = unique(temp_df$tissue),
+        age_at_onset = unique(temp_df$age_at_symptom_onset),
+        age_at_death = unique(temp_df$age_at_death),
+        disease_duration_in_months = unique(temp_df$disease_duration_in_months),
+        sex_genotype = unique(temp_df$sex_genotype),
+        mnd_with_ftd = unique(temp_df$mnd_with_ftd),
+        condition = unique(temp_df$condition),
+        mnd_with_dementia = unique(temp_df$mnd_with_dementia),
+        type_group = unique(temp_df$type_group),
+        erap2_expression = mean(temp_df$expr))
+}))
+
+patient_surv_df$age_at_death[patient_surv_df$age_at_death == "90 or Older"] <- "90"
+patient_surv_df$age_at_death <- as.numeric(patient_surv_df$age_at_death)
+patient_surv_df$age_at_onset <- as.numeric(patient_surv_df$age_at_onset)
+patient_surv_df$disease_duration <- as.numeric(patient_surv_df$disease_duration_in_months)
+
+
+#unique(patient_surv_df[,c("subject_id", "type_group")])$type_group %>% table
+
+```
+- Partition data into spinal cord and brain
+
+```{r}
+
+als_surv_df <- patient_surv_df[patient_surv_df$condition %in% c("ctrl", "als"),]
+als_surv_df$sex_genotype <- factor(als_surv_df$sex_genotype, levels = c("XX", "XY"))
+
+# als_surv_df$condition <- factor(als_surv_df$condition, levels = c("ctrl", "als"))
+als_surv_df$status <- 1
+als_surv_df$status[is.na(als_surv_df$age_at_death)] <- 0
+
+spinal_cord_df <- als_surv_df[als_surv_df$tissue_group == "spinal_cord",c("subject_id", "age_at_onset", "age_at_death", "status", "condition", "erap2_expression")]
+spinal_cord_df$condition <- factor(spinal_cord_df$condition, levels = c("ctrl", "als", "als+ftd", "ftd"))
+
+brain_df <- als_surv_df[als_surv_df$tissue_group == "brain",c("subject_id", "age_at_onset", "age_at_death", "status", "condition", "erap2_expression")]
+brain_df$condition <- factor(brain_df$condition, levels = c("ctrl", "als", "als+ftd", "ftd"))
+
+```
+
+- Generate Seeds
+
+```{r}
+
+require("randomForestSRC")
+require("parallel")
+# generate seeds
+seed_file <- file.path(save_dir, "01-seed-file-for-comparing-RFS-survival-curves-between-als-and-control.rds")
+
+if(!file.exists(seed_file)){
+    seed_list <- sample.int(.Machine$integer.max, 1000)    
+    saveRDS(object = seed_list, file = seed_file)
+}else{
+    seed_list <- readRDS(seed_file)
+}
+
+spinal_cord_and_disease_models <- lapply(seq_along(seed_list), function(x){
+    message(x)
+    set.seed(seed_list[x])
+    rsf_model <- rfsrc(Surv(age_at_death, status) ~ condition + erap2_expression, 
+        data = spinal_cord_df, ntree = 1000, importance = TRUE)
+})
+
+```
+
+- Get risk scores for disease onset
+
+```{r}
+
+require("matrixStats")
+
+non_na_spinal_cord_df <- spinal_cord_df[
+    !is.na(spinal_cord_df$age_at_death), c("subject_id", "age_at_onset", "age_at_death", "status", "condition", "erap2_expression")]
+
+# get predicted risk 
+
+spinal_cord_risk_score_matrix <- do.call(cbind, lapply(spinal_cord_and_disease_models, function(x){
+    message("Done...")
+    rsf_pred <- predict(x, newdata = non_na_spinal_cord_df)
+    rsf_pred$predicted
+}))
+
+non_na_spinal_cord_df$risk_score <- rowMedians(spinal_cord_risk_score_matrix)
+median_risk <- median(non_na_spinal_cord_df$risk_score, na.rm = T)
+non_na_spinal_cord_df$risk_group <- ifelse(non_na_spinal_cord_df$risk_score >= median_risk, "high", "low")
+
+differential_survival <- survdiff(Surv(age_at_death, status) ~ risk_group, data = non_na_spinal_cord_df)
+(differential_survival$obs[1] / differential_survival$exp[1]) / (differential_survival$obs[2] / differential_survival$exp[2])
+
+lapply(split(non_na_spinal_cord_df$erap2_expression, non_na_spinal_cord_df$risk_group), summary)
+lapply(split(non_na_spinal_cord_df$age_at_death, non_na_spinal_cord_df$risk_group), summary)
+
+table(non_na_spinal_cord_df$risk_group, non_na_spinal_cord_df$condition)
+
+```
+
+- Plot survival curves
+
+```{r}
+
+current_theme <- theme(
+    legend.position = "bottom",
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "azure3",
+    linetype = "dashed",
+    size = 0.2))
+
+fit <- survfit(Surv(age_at_death, status) ~ risk_group, data = non_na_spinal_cord_df)
+
+the_plot <- ggsurvplot(fit, 
+    data = non_na_spinal_cord_df,
+    palette = c("#FF5666", "#FFCCC9"),
+    pval = T, pval.method = T,
+    conf.int = F,
+    # surv.median.line = c("v"),
+    risk.table = "absolute",
+    ggtheme = theme_bw() + current_theme)$plot
+the_plot <- the_plot + ggtitle(paste("random forest survival curve"))
+
+ggsave(width = 7, height = 7, file = file.path(plot_dir, "11-01-plot-random-forest-survival-curve-for-spinal-cord-ALS-vs-Control.pdf"), the_plot)
+
+```
+
+- Plot ERAP2 expression for risk groups
+
+```{r}
+
+require("ggbeeswarm")
+current_theme <- theme(
+    legend.position = "bottom",
+    text = element_text(size = 10),
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "azure3",
+    linetype = "dashed",
+    size = 0.2))
+
+# Plot the two ROC curves together
+colours <- c("high" = "#FF5666", "low" = "#FFCCC9")
+The_plot <- ggplot(non_na_spinal_cord_df, aes(x = risk_group, y = erap2_expression))
+The_plot <- The_plot + geom_boxplot(aes(fill = risk_group), colour = "#000000", 
+    width = 0.1, lwd = 0.5, outlier.shape = NA)
+The_plot <- The_plot + geom_quasirandom(aes(fill = risk_group), shape = 21, colour = "#000000")
+The_plot <- The_plot + scale_x_discrete("Risk group")
+The_plot <- The_plot + scale_y_continuous("ERAP2 expression")
+The_plot <- The_plot + scale_fill_manual("Risk group", values = colours)
+The_plot <- The_plot + labs(title = "Age at symptom onset")
+# The_plot <- The_plot + facet_wrap(. ~ tissue_group, scales = "free")
+The_plot <- The_plot + theme_bw() + current_theme
+ggsave(width = 7, height = 7, file = file.path(plot_dir, "11-02-plot-erap2-expression-for-high-and-low-risk-groups.pdf"), The_plot)
+
+
+```
+
+- Plot age at symptom onset
+
+```{r}
+
+The_plot <- ggplot(non_na_spinal_cord_df[non_na_spinal_cord_df$condition == "als",], aes(x = risk_group, y = age_at_onset))
+The_plot <- The_plot + geom_boxplot(aes(fill = risk_group), colour = "#000000", 
+    width = 0.1, lwd = 0.5, outlier.shape = NA)
+The_plot <- The_plot + geom_quasirandom(aes(fill = risk_group), shape = 21, colour = "#000000")
+The_plot <- The_plot + scale_x_discrete("Risk group")
+The_plot <- The_plot + scale_y_continuous("age of onset")
+The_plot <- The_plot + scale_fill_manual("Risk group", values = colours)
+The_plot <- The_plot + labs(title = "Age at symptom onset")
+# The_plot <- The_plot + facet_wrap(. ~ tissue_group, scales = "free")
+The_plot <- The_plot + theme_bw() + current_theme
+ggsave(width = 7, height = 7, file = file.path(plot_dir, "11-03-plot-age-at-symptom-onset-for-high-and-low-risk-groups.pdf"), The_plot)
+
+
+
+wilcox.test(non_na_spinal_cord_df[non_na_spinal_cord_df$risk_group == "high", "age_at_onset"],
+    non_na_spinal_cord_df[non_na_spinal_cord_df$risk_group == "low", "age_at_onset"])
+
+median(non_na_spinal_cord_df[non_na_spinal_cord_df$risk_group == "high", "age_at_onset"], na.rm = T)
+
+median(non_na_spinal_cord_df[non_na_spinal_cord_df$risk_group == "low", "age_at_onset"], na.rm = T)
+
+saveRDS(object = non_na_spinal_cord_df, file = file.path(save_dir, "02-summarised-patient-dataframe-with-rsf-risk-scores.rds"))
+
+```
+

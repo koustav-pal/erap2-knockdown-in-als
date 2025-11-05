@@ -1,0 +1,168 @@
+---
+title:ERAP2 knockdown in astrocytes
+output:pdf_document
+---
+
+
+### Main questions
+
+We set out to understand the role of ERAP2 in ALS. The main questions that have been defined until now are,
+
+- What is the effect of ERAP2 siRNA in control lines?
+- What is the effect between control and ALS lines? 
+- What is the effect of ERAP2 siRNA on ALS lines? 
+
+### 1.0 Package requirements
+
+- Include required packages 
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+require("stringr")
+require("DESeq2")
+require("MASS")
+require("apeglm")
+require("PCAtools")
+require("rtracklayer")
+
+
+```
+
+
+- change to current working directory `/camp/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis`.
+
+```{r}
+
+setwd("/camp/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis")
+
+rdata_dir <- "15-erap2-kd-rnaseq/rdata_files/"
+output_dir <- "15-erap2-kd-rnaseq/output_files/"
+input_dir <- "15-erap2-kd-rnaseq/input_files/"
+plot_dir <- "15-erap2-kd-rnaseq/plots/"
+tmp_dir <- "15-erap2-kd-rnaseq/tmp/"
+if(!(file.exists(plot_dir))){
+    dir.create(plot_dir)
+}
+if(!(file.exists(input_dir))){
+    dir.create(input_dir)
+}
+if(!(file.exists(output_dir))){
+    dir.create(output_dir)
+}
+if(!(file.exists(rdata_dir))){
+    dir.create(rdata_dir)
+}
+if(!(file.exists(tmp_dir))){
+    dir.create(tmp_dir)
+}
+
+```
+
+### 2.0 Import data
+
+- Read differentially expressed genes 
+
+```{r}
+
+differentially_expressed_events_df <- read.csv(file.path(output_dir, "01-differentially-expressed-events-pvalue-lt-0.05.csv"))
+
+```
+
+### Frequency of differential expression
+
+```{r}
+
+frequency_df <- as.data.frame(table(differentially_expressed_events_df$contrast, differentially_expressed_events_df$direction))
+colnames(frequency_df) <- c("contrast", "direction", "frequency")
+frequency_df <- frequency_df[!(frequency_df$contrast %in% c("effect_of_erap2_kd_in_als_vs_ctrl", "genetic_effect_of_als")),]
+frequency_df$contrast <- factor(frequency_df$contrast, levels = c("als_vs_ctrl", "erap2_kd_effect_in_control", "erap2_kd_effect_in_als"))
+prop_df <- do.call(rbind, lapply(split(frequency_df, frequency_df$contrast), function(x){
+    x <- x[rev(order(x$direction)),]
+    x$prop <- x$frequency / sum(x$frequency)
+    x$lab_y <-  cumsum(x$prop) - (0.5 * x$prop)
+    return(x)
+}))
+
+```
+
+- Plot frequency plots
+
+```{r}
+
+require("ggplot2")
+
+my_theme <- theme(legend.position = "bottom",
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 8, hjust = 1, angle = 45),
+    axis.text.y = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "azure3",
+    linetype = "dashed", size = 0.2))
+
+Colours <- c("up" = "#D81E5B", "down" = "#3993DD")
+the_plot <- ggplot(prop_df, aes(x = contrast, y = prop))
+the_plot <- the_plot + geom_col(aes(fill = direction), colour = "#000000")
+the_plot <- the_plot + geom_text(data = prop_df, aes(x = contrast, y = lab_y, label = frequency), colour = "#000000")
+the_plot <- the_plot + scale_x_discrete("comparisons")
+the_plot <- the_plot + scale_y_continuous("log10 frequency of differential expression")
+the_plot <- the_plot + scale_fill_manual("lfc direction", values = Colours)
+the_plot <- the_plot + theme_bw()
+the_plot <- the_plot + my_theme
+ggsave(the_plot, file = file.path(plot_dir, "01-01-plot-frequency-of-differential-expression.pdf"), height = 9, width = 3)
+
+```
+
+
+- Plot venn diagram of contrasts
+
+
+```{r}
+
+require("ggvenn")
+require("cowplot")
+
+
+als_vs_contrl_up <- differentially_expressed_events_df$gene_name[
+    !is.na(differentially_expressed_events_df$gene_name) & 
+    differentially_expressed_events_df$contrast == "als_vs_ctrl" & 
+    differentially_expressed_events_df$direction == "up"]
+
+als_vs_contrl_down <- differentially_expressed_events_df$gene_name[
+    !is.na(differentially_expressed_events_df$gene_name) & 
+    differentially_expressed_events_df$contrast == "als_vs_ctrl" & 
+    differentially_expressed_events_df$direction == "down"]
+
+erap2_effect_in_als_up <- differentially_expressed_events_df$gene_name[
+    !is.na(differentially_expressed_events_df$gene_name) & 
+    differentially_expressed_events_df$contrast == "erap2_kd_effect_in_als" & 
+    differentially_expressed_events_df$direction == "up"]
+
+erap2_effect_in_als_down <- differentially_expressed_events_df$gene_name[
+    !is.na(differentially_expressed_events_df$gene_name) & 
+    differentially_expressed_events_df$contrast == "erap2_kd_effect_in_als" & 
+    differentially_expressed_events_df$direction == "down"]
+
+
+all_genes <- unique(c(differentially_expressed_events_df$gene_name[differentially_expressed_events_df$contrast == "als_vs_ctrl"],
+    differentially_expressed_events_df$gene_name[differentially_expressed_events_df$contrast == "erap2_kd_effect_in_als"]))
+
+intersect_df <- data.frame(genes = all_genes, 
+    als_vs_contrl_up = all_genes %in% als_vs_contrl_up,
+    als_vs_contrl_down = all_genes %in% als_vs_contrl_down,
+    erap2_kd_in_als_up = all_genes %in% erap2_effect_in_als_up,
+    erap2_kd_in_als_down = all_genes %in% erap2_effect_in_als_down)
+
+
+
+the_plot <- ggplot(intersect_df, aes(A = `als_vs_contrl_up`, B = `als_vs_contrl_down`, 
+    C = `erap2_kd_in_als_up`, D = `erap2_kd_in_als_down`)) + 
+    geom_venn(fill_color = c("#ED6A5E", "#2AB7CA", "#FF8E72", "#73C5FF")) + theme_void()
+
+save_plot(filename = file.path(plot_dir, "01-02-venn-diagrams-of-als-vs-control-and-erap2-kd-in-als.pdf"),
+    plot = the_plot, base_height = 7, base_width = 7)
+
+
+```

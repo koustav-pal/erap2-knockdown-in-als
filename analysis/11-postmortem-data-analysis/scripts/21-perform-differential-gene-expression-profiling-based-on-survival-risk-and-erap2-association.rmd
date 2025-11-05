@@ -1,0 +1,367 @@
+---
+title:Microsatellite summary analysis
+output:pdf_document
+---
+
+
+### Main questions
+
+This document contains all of the data required for analysing the AnswerALS data.
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/export2/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD` and include required packages 
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/export2/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis/")
+require("HiCBricks")
+require("GenomicRanges")
+require("stringr")
+# require("Biostrings")
+# require("rtracklayer")
+# require("GenomeInfoDb")
+# require("GenomicFeatures")
+require("ggplot2")
+library(rlang)
+library(riskRegression)
+library(survival)
+library(survminer)
+library(gganimate)
+library(transformr)
+library(plotly)
+library(reshape2)
+library(knitr)
+library(rmarkdown)
+library(parallel)
+require("RColorBrewer")
+require("STRINGdb")
+
+```
+
+### 2.0 Include experiment matrix
+
+- Let's first import the counts.
+
+```{r include = FALSE, message = FALSE, warning = FALSE}
+
+analysis_path <- "11-postmortem-data-analysis/"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+tmp_dir <- file.path(analysis_path, "tmp")
+
+
+dir.create(save_dir, recursive = T)
+dir.create(plot_dir, recursive = T)
+dir.create(input_dir, recursive = T)
+dir.create(output_dir, recursive = T)
+dir.create(tmp_dir, recursive = T)
+
+
+```
+
+### 3.0 Imports
+
+- Load penetrance data
+
+```{r}
+
+# postmortem_list <- readRDS(file.path(save_dir, "03-02-list_of_counts_stat_samplesheet_from_nygc.rds"))
+gene_level_count_list <- readRDS(file.path(save_dir, "01-gene-level-counts-of-postmortem-samples.rds"))
+risk_stratification_df <- readRDS("18-screening-for-erap2-mutations-in-postmortem/rdata_files/02-all-patient-disease-duration-risk-stratified-sampleinfo.rds")
+feature_ranges <- readRDS(file.path(save_dir, "01-all-merged-exonic-and-intronic-segments-in-genes.rds"))
+
+
+```
+
+### Analysis
+
+
+- Get gene level counts
+
+```{r}
+
+counts_matrix <- gene_level_count_list$counts
+patient_df <- gene_level_count_list$coldata
+
+summarised_gene_count_matrix <- do.call(cbind, lapply(split(patient_df$column_id, paste(patient_df$subject_id, patient_df$tissue)), function(column_ids){
+    if(length(column_ids) == 1){
+        return(counts_matrix[,column_ids])
+    }
+    return(rowMeans(counts_matrix[,column_ids]))
+}))
+
+```
+
+- Import gtf
+
+```{r}
+
+require("rtracklayer")
+annotation_gtf <- "/export2/home/koustav/Genomes/ENSEMBL_hg38/Homo_sapiens.GRCh38.104.chr_patch_hapl_scaff.gtf"
+annotation_ranges <- import.gff2(annotation_gtf)
+annotation_gene_ranges <- annotation_ranges[annotation_ranges$type == "gene"]
+
+```
+
+- Intersect risks
+
+
+```{r}
+
+risk_stratification_df$tissue[risk_stratification_df$tissue == "cervical"] <- "Spinal_Cord_Cervical"
+risk_stratification_df$tissue[risk_stratification_df$tissue == "lumbar"] <- "Spinal_Cord_Lumbar"
+risk_stratification_df$tissue[risk_stratification_df$tissue == "thoracic"] <- "Spinal_Cord_Thoracic"
+risk_stratification_df$unique_id <- paste(risk_stratification_df$subject_id, risk_stratification_df$tissue)
+risk_stratification_df$mutation <- factor(as.character(risk_stratification_df$rs1423568), level = c("0", "1"))
+
+
+```
+
+- How many patients are in each group
+
+```{r}
+
+table(risk_stratification_df$risk_group[risk_stratification_df$tissue %in% c("Spinal_Cord_Cervical")], risk_stratification_df$mutation[risk_stratification_df$tissue %in% c("Spinal_Cord_Cervical")])
+
+#        0  1
+#  high 51 18
+#  low  19 50
+
+
+```
+
+
+
+```{r}
+
+# cervical_df <- risk_stratification_df[risk_stratification_df$tissue %in% c("Spinal_Cord_Cervical"),]
+# vapply(split(cervical_df$disease_duration, paste(cervical_df$risk_group, cervical_df$mutation)), median, 1)
+
+```
+
+- Perform differential expression profiling
+
+
+```{r}
+
+require("DESeq2")
+
+selected_gene_counts_matrix <- summarised_gene_count_matrix[rowMeans(summarised_gene_count_matrix) > 1,]
+deseq_object <- DESeqDataSetFromMatrix(countData = round(selected_gene_counts_matrix[,risk_stratification_df$unique_id[risk_stratification_df$tissue %in% c("Spinal_Cord_Cervical")]]), 
+    colData = risk_stratification_df[risk_stratification_df$tissue %in% c("Spinal_Cord_Cervical"),], 
+    design = ~ risk_group + mutation + risk_group:mutation)
+differential_object <- DESeq(deseq_object)
+
+```
+
+- Make contrasts to determine processes governing duration risk
+
+```{r}
+
+model_matrix <- model.matrix(design(differential_object), colData(differential_object))
+
+```
+
+- Identify factors governing onset risk
+
+```{r}
+
+duration <- colMeans(model_matrix[differential_object$risk_group == "high",]) - colMeans(model_matrix[differential_object$risk_group == "low",])
+results_object <- results(differential_object, contrast = duration)
+results_object$contrast <- "high_vs_low"
+high_vs_low_df <- results_object
+high_vs_low_df[high_vs_low_df$pvalue < 0.05 & !is.na(high_vs_low_df$pvalue),] %>% nrow
+
+
+```
+
+- Identify the mutation specific effect across all patients
+
+```{r}
+
+mutation_risk <- colMeans(model_matrix[differential_object$mutation == "1",]) - colMeans(model_matrix[differential_object$mutation == "0",])
+results_object <- results(differential_object, contrast = mutation_risk)
+results_object$contrast <- "1_vs_0"
+mut_present_vs_absent_df <- results_object
+mut_present_vs_absent_df <- mut_present_vs_absent_df[mut_present_vs_absent_df$pvalue < 0.05 & !is.na(mut_present_vs_absent_df$pvalue),]
+
+```
+
+- Identify effect of the mutation on high risk patients
+
+```{r}
+
+mutation_risk_on_high_risk <- colMeans(model_matrix[differential_object$mutation == "1" & differential_object$risk_group == "high",]) - colMeans(model_matrix[differential_object$mutation == "0" & differential_object$risk_group == "high",])
+
+results_object <- results(differential_object, contrast = mutation_risk_on_high_risk)
+results_object$contrast <- "high_1_vs_high_0"
+high_1_vs_high_0 <- results_object
+high_1_vs_high_0 <- high_1_vs_high_0[high_1_vs_high_0$pvalue < 0.05 & !is.na(high_1_vs_high_0$pvalue),]
+
+```
+
+- Identify effect of the mutation on low risk patients
+
+```{r}
+
+mutation_risk_on_low_risk <- colMeans(model_matrix[differential_object$mutation == "1" & differential_object$risk_group == "low",]) - colMeans(model_matrix[differential_object$mutation == "0" & differential_object$risk_group == "low",])
+
+results_object <- results(differential_object, contrast = mutation_risk_on_low_risk)
+results_object$contrast <- "low_1_vs_low_0"
+low_1_vs_low_0 <- results_object
+low_1_vs_low_0 <- low_1_vs_low_0[low_1_vs_low_0$pvalue < 0.05 & !is.na(low_1_vs_low_0$pvalue),]
+
+```
+
+- Identify effect of the interaction between mutation and risk
+
+```{r}
+
+combined_mutation_risk <- colMeans(model_matrix[differential_object$mutation == "0" & differential_object$risk_group == "high",]) - colMeans(model_matrix[differential_object$mutation == "1" & differential_object$risk_group == "low",])
+
+results_object <- results(differential_object, contrast = combined_mutation_risk)
+results_object$contrast <- "high_0_vs_low_1"
+high_0_vs_low_1 <- results_object
+high_0_vs_low_1 <- high_0_vs_low_1[high_0_vs_low_1$pvalue < 0.05 & !is.na(high_0_vs_low_1$pvalue),]
+
+```
+
+- Perform gene set enrichment
+
+```{r}
+
+
+
+contrast_df <- rbind(
+    high_vs_low_df[high_vs_low_df$pvalue < 0.05 & !is.na(high_vs_low_df$pvalue),], 
+    mut_present_vs_absent_df[mut_present_vs_absent_df$pvalue < 0.05 & !is.na(mut_present_vs_absent_df$pvalue),], 
+    high_1_vs_high_0[high_1_vs_high_0$pvalue < 0.05 & !is.na(high_1_vs_high_0$pvalue),], 
+    low_1_vs_low_0[low_1_vs_low_0$pvalue < 0.05 & !is.na(low_1_vs_low_0$pvalue),],
+    high_0_vs_low_1[high_0_vs_low_1$pvalue < 0.05 & !is.na(high_0_vs_low_1$pvalue),])
+
+
+contrast_df[rownames(contrast_df) %in% "ENSG00000164308",]
+
+
+contrast_df$gene_name <- annotation_gene_ranges$gene_name[match(rownames(contrast_df), annotation_gene_ranges$gene_id)]
+contrast_df$direction <- ifelse(contrast_df$log2FoldChange > 0, "up", "down")
+
+```
+
+- Compute correlation between all genes
+
+```{r}
+
+norm_matrix <- counts(differential_object, normalize = T)
+norm_matrix <- norm_matrix[rownames(norm_matrix) %in% rownames(contrast_df),]
+
+coldata_df <- colData(differential_object)
+
+erap2_associated_effect_df <- do.call(rbind, lapply(rownames(norm_matrix), function(x){
+    message(x)
+    temp_df <- data.frame(y = norm_matrix[x,], 
+        x = norm_matrix["ENSG00000164308",],
+        risk_group = factor(coldata_df$risk_group, levels = c("low", "high")), 
+        mutation = factor(coldata_df$mutation, levels = c("0", "1")))
+
+    linear_model_out <- summary(lm(data = temp_df, formula = log10(y+1) ~ log10(x+1) + risk_group + x:risk_group))
+    return_df <- data.frame(
+        gene_id = x, 
+        erap2_est = linear_model_out$coefficients[2,1],
+        erap2_pval = linear_model_out$coefficients[2,4],
+        risk_group_est = linear_model_out$coefficients[3,1],
+        risk_group_pval = linear_model_out$coefficients[3,4],
+        erap2_risk_group_est = linear_model_out$coefficients[4,1],
+        erap2_risk_group_pval = linear_model_out$coefficients[4,4])
+}))
+
+
+erap2_associated_effect_df$shift_in_erap2_risk_group_est <- erap2_associated_effect_df$erap2_est + erap2_associated_effect_df$erap2_risk_group_est
+
+sig_erap2_associated_effect_df <- erap2_associated_effect_df[
+        erap2_associated_effect_df$risk_group_pval < 0.05 & 
+        erap2_associated_effect_df$erap2_risk_group_pval < 0.05 & 
+        erap2_associated_effect_df$gene_id %in% rownames(contrast_df),]
+
+
+sig_erap2_associated_effect_df$erap2_specific_direction <- ifelse(sig_erap2_associated_effect_df$shift_in_erap2_risk_group_est > 0, "up", "down")
+
+
+gene_ranges <- annotation_ranges[annotation_ranges$type == "gene"]
+sig_erap2_associated_effect_df$gene_name <- annotation_ranges$gene_name[match(sig_erap2_associated_effect_df$gene_id, annotation_ranges$gene_id)]
+
+library("enrichR")
+dbs <- "GO_Biological_Process_2023"
+directions <- c("up", "down")
+
+contrast_split <- split(sig_erap2_associated_effect_df, sig_erap2_associated_effect_df$erap2_specific_direction)
+enrichment_result_df <- do.call(rbind, lapply(contrast_split, function(temp_df){
+    db_df_list <- lapply(dbs, function(a_database){
+        current_genes <- temp_df$gene_name[!is.na(temp_df$gene_name)]
+        an_enrichment_df <- enrichr(current_genes,  a_database)[[1]]
+        if(nrow(an_enrichment_df) == 0){
+            return(NULL)
+        }
+        an_enrichment_df$direction <- unique(temp_df$erap2_specific_direction)
+        an_enrichment_df$num_gene <- length(current_genes)
+        an_enrichment_df$db <- a_database
+        Sys.sleep(5)
+        return(an_enrichment_df)
+    })
+    db_df <- do.call(rbind, db_df_list)
+}))
+enrichment_result_df$gene_ratio <- vapply(enrichment_result_df$Overlap, function(x){
+    eval(parse(text = x))
+},1)
+significant_gene_set_enrichment <- enrichment_result_df[enrichment_result_df$P.value < 0.05 & enrichment_result_df$gene_ratio > 0.15,]
+
+
+```
+
+
+```{r}
+
+selected_significant_gene_set_enrichment <- lapply(split(significant_gene_set_enrichment,  significant_gene_set_enrichment$direction), function(temp_df){
+    return_df <- temp_df[order(temp_df$P.value, decreasing = F),][1:10,]
+    return_df$term_only <- vapply(str_split(return_df$Term, pattern = " "), function(x){ paste(x[-length(x)], collapse = " ")}, "1")
+    return_df$term_only <- factor(return_df$term_only, levels = rev(return_df$term_only))
+    return(return_df)
+})
+
+
+lapply(selected_significant_gene_set_enrichment, function(temp_df){
+    current_theme <- theme(
+    legend.position = "bottom",
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 8),
+    axis.text.y = element_text(size = 8),
+    legend.text = element_text(size = 8),
+    legend.title = element_text(size = 8),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "azure3",
+    linetype = "dashed",
+    size = 0.2))
+
+    colours <- c("down" = "#065A82", "up" = "#E3655B")
+    ThePlot <- ggplot(temp_df, aes(x = -log10(P.value), y = term_only))
+    # ThePlot <- ThePlot + geom_vline(xintercept = 0, linetype = "dashed", colour = "#000000")
+    ThePlot <- ThePlot + geom_point(aes(fill = direction, size = gene_ratio), colour = "#000000", shape = 21)
+    ThePlot <- ThePlot + scale_x_continuous("-log10(p-value)")
+    ThePlot <- ThePlot + scale_y_discrete("GO:BP enriched terms")
+    ThePlot <- ThePlot + theme_bw()
+    ThePlot <- ThePlot + scale_fill_manual("Direction", values = colours)
+    #ThePlot <- ThePlot + facet_wrap(. ~ direction, scales = "free", nrow = 1, ncol = 2)
+    ThePlot <- ThePlot + ggtitle("gene set enrichment for repeat containing genes")
+    ThePlot <- ThePlot + current_theme
+    ggsave(height = 7, width = 10, file = file.path(plot_dir, paste(paste("21-01-plot-gene-set-enrichment-for",unique(temp_df$direction), sep = "-"), ".pdf", sep = "")), ThePlot)
+})
+
+
+```
+
+

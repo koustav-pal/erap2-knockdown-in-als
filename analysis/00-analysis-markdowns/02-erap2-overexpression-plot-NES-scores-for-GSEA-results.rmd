@@ -1,0 +1,146 @@
+---
+title:Hannah's astrocyte and motor neuron data
+output:pdf_document
+---
+
+
+### Main questions
+
+We set out to understand the role of hypoxia in astrocytes.
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/camp/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis` and include required packages
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/camp/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis/")
+require("stringr")
+require("DESeq2")
+require("PCAtools")
+require("rtracklayer")
+require("stringr")
+require("ggplot2")
+require("RColorBrewer")
+source("src/plot_utils.R")
+
+```
+
+- Set paths
+
+```{r}
+
+
+rdata_dir <- "02-01-differential-expression-profiling/rdata_files/"
+output_dir <- "02-01-differential-expression-profiling/output_files/"
+input_dir <- "02-01-differential-expression-profiling/input_files/"
+plot_dir <- "02-01-differential-expression-profiling/plots/"
+tmp_dir <- "02-01-differential-expression-profiling/tmp/"
+if(!(file.exists(plot_dir))){
+    dir.create(plot_dir)
+}
+if(!(file.exists(input_dir))){
+    dir.create(input_dir)
+}
+if(!(file.exists(output_dir))){
+    dir.create(output_dir)
+}
+if(!(file.exists(rdata_dir))){
+    dir.create(rdata_dir)
+}
+if(!(file.exists(tmp_dir))){
+    dir.create(tmp_dir)
+}
+
+```
+
+### 2.0 Load enriched terms
+
+- Let's first include the reactivity gene expression matrix and the supplied experiment matrix.
+
+```{r include = FALSE, message = FALSE, warning = FALSE}
+
+go_bp_enriched_terms_df <- readRDS(file.path(rdata_dir, "03_erap2_overexpression_go_bp_GSEA_pval_0.05.rds"))
+go_bp_enriched_terms_df$database <- "GO:BP"
+
+go_mf_enriched_terms_df <- readRDS(file.path(rdata_dir, "03_erap2_overexpression_go_mf_GSEA_pval_0.05.rds"))
+go_mf_enriched_terms_df$database <- "GO:MF"
+
+go_cc_enriched_terms_df <- readRDS(file.path(rdata_dir, "03_erap2_overexpression_go_cc_GSEA_pval_0.05.rds"))
+go_cc_enriched_terms_df$database <- "GO:CC"
+
+hpo_enriched_terms_df <- readRDS(file.path(rdata_dir, "03_erap2_overexpression_hpo_GSEA_pval_0.05.rds"))
+hpo_enriched_terms_df$database <- "HPO"
+
+reactome_enriched_terms_df <- readRDS(file.path(rdata_dir, "03_erap2_overexpression_reactome_GSEA_pval_0.05.rds"))
+reactome_enriched_terms_df$database <- "Reactome"
+
+biocarta_enriched_terms_df <- readRDS(file.path(rdata_dir, "03_erap2_overexpression_biocarta_GSEA_pval_0.05.rds"))
+biocarta_enriched_terms_df$database <- "Biocarta"
+
+hallmark_enriched_terms_df <- readRDS(file.path(rdata_dir, "03_erap2_overexpression_hallmark_GSEA_pval_0.05.rds"))    
+hallmark_enriched_terms_df$database <- "Hallmark"
+
+
+
+all_enriched_terms_df <- rbind(hallmark_enriched_terms_df, go_bp_enriched_terms_df, go_mf_enriched_terms_df,
+    go_cc_enriched_terms_df, hpo_enriched_terms_df, reactome_enriched_terms_df, biocarta_enriched_terms_df)
+
+
+all_enriched_terms_df <- all_enriched_terms_df[all_enriched_terms_df$contrast == "erap2_overexpression_effect",]
+all_enriched_terms_df_split <- split(all_enriched_terms_df, paste( all_enriched_terms_df$database, sep = "_"))
+
+
+```
+
+### 3.0 Plot NES
+
+- Plot the normalised enrichment scores for pathways with at leas
+
+
+```{r}
+
+pdf(file.path(plot_dir, paste(output_prefix(), "03_erap2_overexpression_all_databases_gsea_results_only_erap2_effect.pdf", sep = "_")), height = 12, width = 12)
+lapply(all_enriched_terms_df_split, function(plot_df){
+    a_db <- unique(plot_df$database)
+    if(nrow(plot_df) > 50){
+        message(a_db)
+        
+    }
+    plot_df <- do.call(rbind, lapply(split(plot_df, plot_df$contrast), function(temp_df){
+        temp_df[order(temp_df$NES, decreasing = F),][1:min(30, nrow(temp_df)),]
+    }))
+    all_nes <- vapply(split(plot_df$NES, plot_df$pathway), function(x){ x[which.max(abs(x))]},1)
+    plot_df$pathway <- factor(plot_df$pathway, levels = names(all_nes)[order(all_nes, decreasing = T)])
+
+    ThePlot <- ggplot(plot_df, aes(x = NES, y = pathway))
+    ThePlot <- ThePlot + geom_vline(xintercept = 0, lty = "dashed", colour = "#000000")
+    ThePlot <- ThePlot + geom_point(aes(fill = contrast), shape = 21, size = 4, alpha = 0.6, colour = "#000000")
+    ThePlot <- ThePlot + scale_x_continuous("Normalised Enrichment Score")
+    ThePlot <- ThePlot + scale_y_discrete("pathways")
+    ThePlot <- ThePlot + scale_fill_brewer("contrasts", palette = "Set1")
+    ThePlot <- ThePlot + ggtitle(paste(a_db))
+    # ThePlot <- ThePlot + scale_shape_manual("databases", values = c(21,22,23,24,25))
+    ThePlot <- ThePlot + theme_bw()
+    # ThePlot <- ThePlot + facet_grid(. ~ contrast)
+    ThePlot <- ThePlot + theme(
+        legend.position = "bottom",
+        text = element_text(size = 10),
+        axis.text.x = element_text(size = 10, hjust = 1),
+        axis.text.y = element_text(size = 8),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(size = 10),
+        plot.background = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(colour = "azure3",
+            linetype = "dashed", size = 0.2))
+})
+dev.off()
+
+```
+
+
+
+
+

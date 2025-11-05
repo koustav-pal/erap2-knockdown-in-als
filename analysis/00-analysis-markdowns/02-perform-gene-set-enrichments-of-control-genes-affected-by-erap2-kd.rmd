@@ -1,0 +1,145 @@
+---
+title:Gene-set enrichment of ERAP2 knockdown in astrocytes
+output:pdf_document
+---
+
+
+### Main questions
+
+We set out to understand the role of ERAP2 in ALS. The main questions that have been defined until now are,
+
+- What is the effect of ERAP2 siRNA in control lines?
+- What is the effect between control and ALS lines? 
+- What is the effect of ERAP2 siRNA on ALS lines? 
+
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/camp/lab/luscomben/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis`.
+
+```{r}
+
+setwd("/camp/lab/luscomben/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis")
+
+```
+
+
+- Include required packages and functions
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+require("stringr")
+require("DESeq2")
+require("ggplot2")
+require("RcolorBrewer")
+require("enrichR")
+require("stringr")
+source("src/enrichR_plots.R")
+
+```
+
+- Set paths
+
+```{r}
+
+analysis_path <- "02-differential-expression-profiling"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+
+```
+
+
+- Load the candidate gene selection from previous steps
+
+
+```{r}
+
+candidate_genes_df <- readRDS(file.path(save_dir, "01-significantly-differentially-expressed-genes-pval-less-than-0.05.RDS"))
+candidate_genes_df <- candidate_genes_df[candidate_genes_df$contrasts == "erap2_kd_effect_in_control" & 
+        !is.na(candidate_genes_df$gene_name),]
+
+```
+
+### 1.0 Gene set enrichment using enrichR GO molecular function
+
+
+- Perform gene set enrichment for selected genes df ALS vs Control 
+
+```{r}
+
+all_original_enrichment_df <- make_enrichR_df(candidate_genes_df, lfc_col = "logfc", db = "GO_Molecular_Function_2021")
+pdf(file = file.path(plot_dir, "06-go-molecular-function-gene-set-enrichment-profiles-erap2_kd_in_control_selected_genes.pdf"))
+plotEnrich(all_original_enrichment_df[all_original_enrichment_df$direction == "down",], showTerms = 30, numChar = 50, y = "Ratio", orderBy = "Ratio", title = paste("GO Molecular Function GSEA downregulated"))
+plotEnrich(all_original_enrichment_df[all_original_enrichment_df$direction == "up",], showTerms = 30, numChar = 50, y = "Ratio", orderBy = "Ratio", title = paste("GO Molecular Function GSEA upregulated"))
+dev.off()
+
+
+```
+
+### 2.0 Gene set enrichment using enrichR GO biological process
+
+
+- Perform gene set enrichment for selected genes df ALS vs Control 
+
+```{r}
+
+all_original_enrichment_df <- make_enrichR_df(candidate_genes_df, lfc_col = "logfc", db = "GO_Biological_Process_2021")
+pdf(file = file.path(plot_dir, "06-go-biological-process-gene-set-enrichment-profiles-erap2_kd_in_control_selected_genes.pdf"))
+plotEnrich(all_original_enrichment_df[all_original_enrichment_df$direction == "down",], showTerms = 30, numChar = 50, y = "Ratio", orderBy = "Ratio", title = paste("GO Biological Process GSEA downregulated"))
+plotEnrich(all_original_enrichment_df[all_original_enrichment_df$direction == "up",], showTerms = 30, numChar = 50, y = "Ratio", orderBy = "Ratio", title = paste("GO Biological Process GSEA upregulated"))
+dev.off()
+
+
+```
+
+### 3.0 Gene set enrichment using enrichR GO cellular component
+
+
+- Perform gene set enrichment for selected genes df ALS vs Control 
+
+```{r}
+
+all_original_enrichment_df <- make_enrichR_df(candidate_genes_df, lfc_col = "logfc", db = "GO_Cellular_Component_2021")
+pdf(file = file.path(plot_dir, "06-go-cellular-component-gene-set-enrichment-profiles-erap2_kd_in_control_selected_genes.pdf"))
+plotEnrich(all_original_enrichment_df[all_original_enrichment_df$direction == "down",], showTerms = 30, numChar = 50, y = "Ratio", orderBy = "Ratio", title = paste("GO Cellular Component GSEA downregulated"))
+plotEnrich(all_original_enrichment_df[all_original_enrichment_df$direction == "up",], showTerms = 30, numChar = 50, y = "Ratio", orderBy = "Ratio", title = paste("GO Cellular Component GSEA upregulated"))
+dev.off()
+
+
+```
+
+
+### 3.0 Gene set enrichment using enrichR KEGG
+
+
+- Perform gene set enrichment for selected genes df ALS vs Control 
+
+```{r}
+
+all_original_enrichment_df <- make_enrichR_df(candidate_genes_df, lfc_col = "logfc", db = "KEGG_2021_Human")
+pdf(file = file.path(plot_dir, "06-kegg-gene-set-enrichment-profiles-erap2_kd_in_control_selected_genes.pdf"))
+plotEnrich(all_original_enrichment_df[all_original_enrichment_df$direction == "down",], showTerms = 30, numChar = 50, y = "Ratio", orderBy = "Ratio", title = paste("KEGG downregulated"))
+plotEnrich(all_original_enrichment_df[all_original_enrichment_df$direction == "up",], showTerms = 30, numChar = 50, y = "Ratio", orderBy = "Ratio", title = paste("KEGG upregulated"))
+dev.off()
+
+
+```
+
+### 3.0 Gene set enrichment using enrichR Reactome
+
+
+- Perform gene set enrichment for selected genes df ALS vs Control 
+
+```{r}
+
+all_original_enrichment_df <- make_enrichR_df(candidate_genes_df, lfc_col = "logfc", db = "Reactome_2022")
+pdf(file = file.path(plot_dir, "06-reactome-gene-set-enrichment-profiles-erap2_kd_in_control_selected_genes.pdf"))
+plotEnrich(all_original_enrichment_df[all_original_enrichment_df$direction == "down",], showTerms = 30, numChar = 50, y = "Ratio", orderBy = "Ratio", title = paste("Reactome downregulated"))
+plotEnrich(all_original_enrichment_df[all_original_enrichment_df$direction == "up",], showTerms = 30, numChar = 50, y = "Ratio", orderBy = "Ratio", title = paste("Reactome upregulated"))
+dev.off()
+
+
+```

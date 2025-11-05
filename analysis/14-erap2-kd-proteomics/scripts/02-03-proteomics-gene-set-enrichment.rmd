@@ -1,0 +1,249 @@
+---
+title:Gene set enrichment results from ERAP2 KD proteomics
+output:pdf_document
+---
+
+
+### Main questions
+
+We want to perform gene set enrichment of ERAP2 KD proteomics data.
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/nemo/lab/luscomben/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis` and include required packages
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/nemo/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis")
+require("stringr")
+require("DESeq2")
+require("PCAtools")
+require("rtracklayer")
+require("stringr")
+require("ggvenn")
+require("cowplot")
+unloadNamespace("enrichR")
+library("enrichR")
+require("msigdbr")
+require("clusterProfiler")
+require("org.Hs.eg.db")
+# source("useful_functions/plot_utils.R")
+require("enrichplot")
+require("GOSemSim")
+require("httr")
+require("jsonlite")
+
+```
+
+- Set paths
+
+```{r}
+
+analysis_path <- "14-erap2-kd-proteomics/"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+
+dir.create(save_dir)
+dir.create(plot_dir)
+dir.create(input_dir)
+dir.create(output_dir)
+
+```
+
+
+### Load annotation file
+
+- Load ensembl annotation gtf
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+require("rtracklayer")
+annotation_gtf <- "/nemo/lab/patanir/home/users/palk/Genomes/ENSEMBL_hg38/Homo_sapiens.GRCh38.104.chr_patch_hapl_scaff.gtf"
+annotation_ranges <- import.gff2(annotation_gtf)
+annotation_gene_ranges <- annotation_ranges[annotation_ranges$type == "gene"]
+
+```
+
+- Load ERAP2 KD proteomics
+
+```{r}
+
+significant_events_df <- readRDS(file.path(save_dir, "02-03-significantly-affected-proteins.rds"))
+pairwise_group_sig_df <- readRDS(file.path(save_dir, "02-04-pairwise-grouped-significantly-affected-proteins.rds"))
+
+```
+
+### 5.0 Perform gene set enrichment
+
+- Perform gene set enrichment of genes
+
+```{r}
+
+imputed_event_df <- significant_events_df[significant_events_df$sig_group == "imputed",]
+
+protein_split <- split(imputed_event_df, imputed_event_df$comparison)
+protein_split <- protein_split[c("VCP_CTRL_vs_CTRL_CTRL", "VCP_ERAP2_vs_CTRL_ERAP2")]
+
+dbs <- c("GO_Biological_Process_2023", "HMDB_Metabolites")
+groups <- names(protein_split)
+directions <- c("up", "down")
+kd_geneset_enrichment_df <- do.call(rbind, lapply(groups, function(a_group){
+    a_temp_df <- protein_split[[a_group]]
+    return_df <- do.call(rbind, lapply(directions, function(a_direction){
+            db_df_list <- lapply(dbs, function(a_database){
+                message(paste(a_database, a_direction, a_group))
+                current_fcs <- a_temp_df$logfc[a_temp_df$direction == a_direction]
+                current_genes <- a_temp_df$protein_name[a_temp_df$direction == a_direction]
+                an_enrichment_df <- enrichr(current_genes,  a_database)[[1]]
+                if(nrow(an_enrichment_df) == 0){
+                    return(NULL)
+                }
+                an_enrichment_df$direction <- a_direction
+                an_enrichment_df$num_gene <- length(current_genes)
+                an_enrichment_df$db <- a_database
+                Sys.sleep(5)
+                return(an_enrichment_df)
+            })
+            db_df <- do.call(rbind, db_df_list)
+        }))
+    return_df$contrasts <- a_group
+    return(return_df)
+}))
+
+kd_geneset_enrichment_df$Gene.ratio <- vapply(kd_geneset_enrichment_df$Overlap, function(x){
+    eval(parse(text = x))
+},1)
+
+
+pdf(file = file.path(plot_dir, "02-07-unimputed-data-GOBP-gene-set-enrichment.pdf"))
+groups <- unique(kd_geneset_enrichment_df$contrasts)
+directions <- c("up", "down")
+lapply(unique(kd_geneset_enrichment_df$db), function(a_database){
+    lapply(groups, function(a_group){
+        lapply(directions, function(a_direction){
+            message(a_group, a_database)
+            current_n <- unique(kd_geneset_enrichment_df[
+                kd_geneset_enrichment_df$contrasts == a_group &
+                kd_geneset_enrichment_df$direction == a_direction &
+                kd_geneset_enrichment_df$db == a_database, "num_gene"])
+            plot_df <- kd_geneset_enrichment_df[kd_geneset_enrichment_df$P.value < 0.05 &
+                kd_geneset_enrichment_df$contrasts == a_group &
+                kd_geneset_enrichment_df$db == a_database &
+                kd_geneset_enrichment_df$direction == a_direction,]
+            if(nrow(plot_df) > 0){
+                plotEnrich(plot_df, showTerms = 10, numChar = 50, y = "Ratio", orderBy = "Gene.ratio", title = paste(a_database, paste("\n",a_group), a_direction, "N=",current_n))
+            }else{
+                return(NULL)
+            }
+        })
+    })
+})
+
+dev.off()
+
+
+```
+
+
+
+
+```{r}
+
+groups <- names(protein_split)
+directions <- c("up", "down")
+biological_process_enrichment_df <- do.call(rbind, lapply(groups, function(a_group){
+    a_temp_df <- protein_split[[a_group]]
+    return_df_1 <- do.call(rbind, lapply(directions, function(a_direction){
+        current_gene_list_df <- a_temp_df[a_temp_df$direction == a_direction,]
+        current_gene_list_df <- current_gene_list_df[,c(2,3,4)]
+        current_object <- GPT_summarisR(current_gene_list_df, organism = "human", enrichment_method = "enrich")
+        enrichment_object <- run_enrichment(current_object, go_db = "BP")
+        filtered_enrichment_object <- filter_results(enrichment_object, 
+            pvalue = 0.05)
+        clustering_object <- run_clustering(filtered_enrichment_object)
+        plot_clustering_qc_plots(clustering_object, 
+            file = file.path(plot_dir, paste("BP", a_group, a_direction, "silhouette_qc_plot.pdf", sep = "-")))
+        summarised_object <- summarise_clusters(clustering_object, 10)
+        plot_enrichment(summarised_object, k = 10, 
+            y_axis = "pvalue",
+            file = file.path(plot_dir, paste("BP", a_group, a_direction, "enrichment.pdf", sep = "-")))
+        return_df <- fetch_summarised_enrichment_results(summarised_object)
+        return_df$direction <- a_direction
+        return(return_df)
+    }))
+    return_df_1$contrasts <- a_group 
+    return(return_df_1)
+}))
+biological_process_enrichment_df$db <- "BP"
+
+cellular_component_enrichment_df <- do.call(rbind, lapply(groups, function(a_group){
+    a_temp_df <- protein_split[[a_group]]
+    return_df_1 <- do.call(rbind, lapply(directions, function(a_direction){
+        current_gene_list_df <- a_temp_df[a_temp_df$direction == a_direction,]
+        current_gene_list_df <- current_gene_list_df[,c(2,3,4)]
+        current_object <- GPT_summarisR(current_gene_list_df, organism = "human", enrichment_method = "enrich")
+        enrichment_object <- run_enrichment(current_object, go_db = "CC")
+        filtered_enrichment_object <- filter_results(enrichment_object, 
+            pvalue = 0.1)
+        clustering_object <- run_clustering(filtered_enrichment_object)
+        plot_clustering_qc_plots(clustering_object, 
+            file = file.path(plot_dir, paste("CC", a_group, a_direction, "silhouette_qc_plot.pdf", sep = "-")))
+        summarised_object <- summarise_clusters(clustering_object, 10)
+        plot_enrichment(summarised_object, k = 10, y_axis = "pvalue",
+            file = file.path(plot_dir, paste("CC", a_group, a_direction, "enrichment.pdf", sep = "-")))
+        return_df <- fetch_summarised_enrichment_results(summarised_object)
+        return_df$direction <- a_direction
+        return(return_df)
+    }))
+    return_df_1$contrasts <- a_group 
+    return(return_df_1)
+}))
+cellular_component_enrichment_df$db <- "CC"
+
+molecular_function_enrichment_df <- do.call(rbind, lapply(groups, function(a_group){
+    a_temp_df <- protein_split[[a_group]]
+    return_df_1 <- do.call(rbind, lapply(directions, function(a_direction){
+        current_gene_list_df <- a_temp_df[a_temp_df$direction == a_direction,]
+        current_gene_list_df <- current_gene_list_df[,c(2,3,4)]
+        current_object <- GPT_summarisR(current_gene_list_df, organism = "human", enrichment_method = "enrich")
+        enrichment_object <- run_enrichment(current_object, go_db = "MF")
+        filtered_enrichment_object <- filter_results(enrichment_object, 
+            pvalue = 0.1)
+        clustering_object <- run_clustering(filtered_enrichment_object)
+        plot_clustering_qc_plots(clustering_object, 
+            file = file.path(plot_dir, paste("MF", a_group, a_direction, "silhouette_qc_plot.pdf", sep = "-")))
+        summarised_object <- summarise_clusters(clustering_object, 10)
+        plot_enrichment(summarised_object, k = 10, y_axis = "pvalue",
+            file = file.path(plot_dir, paste("MF", a_group, a_direction, "enrichment.pdf", sep = "-")))
+        return_df <- fetch_summarised_enrichment_results(summarised_object)
+        return_df$direction <- a_direction
+        return(return_df)
+    }))
+    return_df_1$contrasts <- a_group 
+    return(return_df_1)
+}))
+molecular_function_enrichment_df$db <- "MF"
+
+```
+
+- concatenate all results
+
+```{r}
+
+concatenate_df <- rbind(biological_process_enrichment_df, cellular_component_enrichment_df, molecular_function_enrichment_df)
+
+split_df <- split(concatenate_df, 
+    paste(concatenate_df$db, concatenate_df$contrasts, concatenate_df$direction, sep = "_"))
+
+top_10_terms_list <- lapply(split_df, function(x){
+    x[grepl(x = x$Description, pattern = "lipi"),]
+})
+
+
+
+```
+
+

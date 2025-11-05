@@ -1,0 +1,350 @@
+---
+title:Gene set enrichment results from ERAP2 KD proteomics
+output:pdf_document
+---
+
+
+### Main questions
+
+We set out to understand the role of hypoxia in astrocytes.
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/nemo/lab/luscomben/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis` and include required packages
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/nemo/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis")
+require("stringr")
+require("rtracklayer")
+require("biomaRt")
+require("ggplot2")
+require("RColorBrewer")
+
+```
+
+- Set paths
+
+```{r}
+
+analysis_path <- "14-erap2-kd-proteomics/"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+tmp_dir <- file.path(analysis_path, "tmp")
+
+dir.create(save_dir)
+dir.create(plot_dir)
+dir.create(input_dir)
+dir.create(output_dir)
+dir.create(tmp_dir)
+
+```
+
+
+
+### Load annotation file
+
+- Load ensembl annotation gtf
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+require("rtracklayer")
+annotation_gtf <- "/nemo/lab/patanir/home/users/palk/Genomes/ENSEMBL_hg38/Homo_sapiens.GRCh38.104.chr_patch_hapl_scaff.gtf"
+annotation_ranges <- import.gff2(annotation_gtf)
+annotation_gene_ranges <- annotation_ranges[annotation_ranges$type == "gene"]
+
+```
+
+- Load significantly differentially enriched proteins
+
+```{r}
+
+significant_events_df <- readRDS(file.path(save_dir, "02-03-significantly-affected-proteins.rds"))
+
+```
+
+### 5.0 Perform gene set enrichment
+
+- Map Entrez IDs to Ensembl IDs
+
+```{r}
+
+unconnected <- T
+k <- 1
+while(unconnected){
+    message(k)
+    mart <- tryCatch(useEnsembl("ensembl","hsapiens_gene_ensembl", version = "104"), error = function(cond){
+        return(NA)
+    })
+    if("Mart" %in% class(mart)){
+        unconnected <- F
+        break
+    }
+    k <- k+1
+}
+
+get_ids_df <- getBM(c("entrezgene_id","ensembl_gene_id","uniprotswissprot", 
+    "description","hgnc_symbol", "peptide"), "hgnc_symbol", 
+        unique(significant_events_df$protein_name), mart)
+
+saveRDS(object = get_ids_df, file = file.path(save_dir, "06-01-hgnc-to-uniprot-mapping-df.rds"))
+
+unique_name_to_id_df <- unique(get_ids_df[get_ids_df$uniprotswissprot != "",c("hgnc_symbol", "uniprotswissprot")])
+
+
+```
+
+- Fetch signal peptides, n-glycosylation and membrane location for differentially enriched proteins
+
+```{r}
+
+source("/camp/home/palk/home/Projects/012-Ben-Clarke-ERAP1-KD/repositories/uniprotminR/sources.R")
+
+all_response_list <- lapply(unique_name_to_id_df$uniprotswissprot, function(x){
+    message(x)
+    current_status <- 201
+    while(current_status != 200){
+        a_response_list <- get_url(x)
+        current_status <- status_code(a_response_list)
+    }
+    return(a_response_list)
+})
+names(all_response_list) <- unique_name_to_id_df$uniprotswissprot
+
+saveRDS(object = all_response_list, file = file.path(save_dir, "06-02-all-responses-from-uniprot.rds"))
+
+
+```
+
+- Fetch features
+
+
+```{r}
+
+protein_feature_df <- do.call(rbind, lapply(names(all_response_list), function(x){
+    # message(x)
+    fetch_features(all_response_list[[x]])
+}))
+
+```
+
+- How many proteins are there with a known signal peptide?
+
+```{r}
+
+signal_vector <- check_type_stats(protein_feature_df, "Signal")
+# FALSE  TRUE
+#  1088    96
+
+# FALSE  TRUE
+#  1026   158
+
+
+
+lipid_vector <- check_type_stats(protein_feature_df, "Lipidation",F)
+# FALSE  TRUE
+#  1115    69
+# check_type_stats(protein_feature_df, "Coiled coil",F)
+
+```
+
+- How many proteins contain signal peptides?
+
+```{r}
+
+signal_vector <- check_type_stats(protein_feature_df, "Signal")
+
+signal_df <- data.frame(category = c("unannotated", "signal"), values = as.vector(signal_vector))
+signal_df$proportion <- signal_df$values / sum(signal_df$values)
+signal_df$ymax <- cumsum(signal_df$proportion)
+signal_df$ymin = c(0, head(signal_df$ymax, n=-1))
+signal_df$labelPosition <- (signal_df$ymax + signal_df$ymin) / 2
+signal_df$label <- paste0(signal_df$category, "\n",paste(round(signal_df$proportion * 100,2), "%", sep = ""), 
+    paste("(", signal_df$values, ")", sep = ""))
+
+# FALSE  TRUE
+#  1088    96
+
+the_plot <- ggplot(signal_df, aes(ymax=ymax, ymin=ymin, xmax=4, xmin=3)) +
+  geom_rect(aes(fill=category), colour = "#000000") +
+  geom_text(x=2, aes(y=labelPosition, label=label), color="#000000", size=6) + # x here controls label position (inner / outer)
+  scale_fill_brewer(palette="Set3") +
+  scale_color_brewer(palette="Set3") +
+  coord_polar(theta="y") +
+  xlim(c(-1, 4)) +
+  theme_void() +
+  theme(legend.position = "none")
+ggsave(width = 7, height = 7, file = file.path(plot_dir, "03-03-plot-pie-chart-of-proteins-with-signal-peptides.pdf"), the_plot)
+
+```
+
+
+- How many proteins are glycosylated?
+
+```{r}
+
+glycosylation_vector <- check_type_stats(protein_feature_df, "Glycosylation")
+
+glycosylation_df <- data.frame(category = c("unannotated", "glycosylated"), values = as.vector(glycosylation_vector))
+glycosylation_df$proportion <- glycosylation_df$values / sum(glycosylation_df$values)
+glycosylation_df$ymax <- cumsum(glycosylation_df$proportion)
+glycosylation_df$ymin = c(0, head(glycosylation_df$ymax, n=-1))
+glycosylation_df$labelPosition <- (glycosylation_df$ymax + signal_df$ymin) / 2
+glycosylation_df$label <- paste0(glycosylation_df$category, "\n",paste(round(glycosylation_df$proportion * 100,2), "%", sep = ""), 
+    paste("(", signal_df$values, ")", sep = ""))
+
+# FALSE  TRUE
+#  1088    96
+
+the_plot <- ggplot(glycosylation_df, aes(ymax=ymax, ymin=ymin, xmax=4, xmin=3)) +
+  geom_rect(aes(fill=category), colour = "#000000") +
+  geom_text(x=2, aes(y=labelPosition, label=label), color="#000000", size=6) + # x here controls label position (inner / outer)
+  scale_fill_brewer(palette="Set3") +
+  scale_color_brewer(palette="Set3") +
+  coord_polar(theta="y") +
+  xlim(c(-1, 4)) +
+  theme_void() +
+  theme(legend.position = "none")
+ggsave(width = 7, height = 7, file = file.path(plot_dir, "03-04-plot-pie-chart-of-proteins-with-glycosylation.pdf"), the_plot)
+
+```
+
+- How many proteins are membrane proteins?
+
+```{r}
+
+membrane_vector <- check_type_stats(protein_feature_df, c("Intramembrane", "Transmembrane"),F)
+membrane_df <- data.frame(category = c("unannotated", "membrane"), values = as.vector(membrane_vector))
+membrane_df$proportion <- membrane_df$values / sum(membrane_df$values)
+membrane_df$ymax <- cumsum(membrane_df$proportion)
+membrane_df$ymin = c(0, head(membrane_df$ymax, n=-1))
+membrane_df$labelPosition <- (membrane_df$ymax + membrane_df$ymin) / 2
+membrane_df$label <- paste0(membrane_df$category, "\n",paste(round(membrane_df$proportion * 100,2), "%", sep = ""), 
+    paste("(", membrane_df$values, ")", sep = ""))
+
+# FALSE  TRUE
+#   885   299
+
+the_plot <- ggplot(membrane_df, aes(ymax=ymax, ymin=ymin, xmax=4, xmin=3)) +
+  geom_rect(aes(fill=category), colour = "#000000") +
+  geom_text(x=2, aes(y=labelPosition, label=label), color="#000000", size=6) + # x here controls label position (inner / outer)
+  scale_fill_brewer(palette="Set3") +
+  scale_color_brewer(palette="Set3") +
+  coord_polar(theta="y") +
+  xlim(c(-1, 4)) +
+  theme_void() +
+  theme(legend.position = "none")
+ggsave(width = 7, height = 7, file = file.path(plot_dir, "03-02-plot-pie-chart-of-membrane-proteins.pdf"), the_plot)
+
+```
+
+- list the different types of extra features that are available. 
+
+```{r}
+
+do.call(c, lapply(names(all_response_list), function(x){
+    # message(x)
+    fetch_tissue_specificity(all_response_list[[x]])
+})) %>% unique
+
+
+protein_location_df <- do.call(rbind, lapply(names(all_response_list), function(x){
+    # message(x)
+    fetch_subcellular_localisation(all_response_list[[x]])
+}))
+
+all_locations <- protein_location_df$location
+
+location_frequency_df <- as.data.frame(table(all_locations))
+
+write.csv(location_frequency_df[order(location_frequency_df$Freq, decreasing = T),], file = file.path(output_dir, "06-03-location-frequency-from-uniprot.csv"))
+
+
+```
+
+- These protein locations were annotated for there subcellular locations outside this document. 
+
+```{r}
+
+annotated_location_frequency_df <- read.csv(file.path(output_dir, "06-03-annotated-location-frequency-from-uniprot.csv"))
+
+protein_location_df$location_group <- annotated_location_frequency_df[match(protein_location_df$location, annotated_location_frequency_df$all_locations),"higher_group"]
+
+all_protein_locations_df <- as.data.frame(table(protein_location_df$location_group))
+
+colnames(all_protein_locations_df) <- c("location", "frequency")
+
+all_protein_locations_df$proportion <- all_protein_locations_df$frequency / sum(all_protein_locations_df$frequency)
+all_protein_locations_df$proportion <- all_protein_locations_df$frequency / sum(all_protein_locations_df$frequency)
+all_protein_locations_df$ymax <- cumsum(all_protein_locations_df$proportion)
+all_protein_locations_df$ymin = c(0, head(all_protein_locations_df$ymax, n=-1))
+all_protein_locations_df$labelPosition <- (all_protein_locations_df$ymax + all_protein_locations_df$ymin) / 2
+# all_protein_locations_df$label <- paste0(all_protein_locations_df$category, "\n",paste(round(all_protein_locations_df$proportion * 100,2), "%", sep = ""), 
+#     paste("(", all_protein_locations_df$frequency, ")", sep = ""))
+unique_locations <- unique(all_protein_locations_df$location)
+
+colours <- RColorBrewer::brewer.pal(name = "Set3", n= 11)
+names(colours) <- unique_locations
+colours["Cytoplasm"] <- "#7E8287"
+colours["Nucleus"] <- "#D9D9D9"
+
+all_protein_locations_df$location <- factor(as.character(all_protein_locations_df$location), levels = c(
+    "Cell membrane/Endomembrane",
+    "Cell projections", 
+    "ER / ER-Golgi / Golgi",
+    "Extracellular",
+    "Lysosome",
+    "Microtubules",
+    "Mitochondria",
+    "Synapse",
+    "Vesicles",
+    "Nucleus",
+    "Cytoplasm"))
+
+
+the_plot <- ggplot(all_protein_locations_df, aes(ymax=ymax, ymin=ymin, xmax=4, xmin=3)) +
+  geom_rect(aes(fill=location), colour = "#000000") +
+  # geom_text(x=2, aes(y=labelPosition, label=label), color="#000000", size=6) + # x here controls label position (inner / outer)
+  scale_fill_manual("locations", values = colours) +
+  # scale_color_brewer(palette="Set3") +
+  coord_polar(theta="y") +
+  xlim(c(-1, 4)) +
+  theme_void() +
+  theme(legend.position = "right")
+ggsave(width = 7, height = 7, file = file.path(plot_dir, "03-04-plot-pie-chart-of-subcellular-locations.pdf"), the_plot)
+
+
+```
+
+- STRING enrichment
+
+```{r}
+
+
+require("STRINGdb")
+require("ggrepel")
+
+significant_events_df <- readRDS(file.path(save_dir, "02-03-significantly-affected-proteins.rds"))
+
+
+string_db <- STRINGdb$new(version = "11.5", species = 9606, score_threshold = 200, input_directory = tmp_dir)
+proteins_mapped_to_string_db <- string_db$map(module_df, "genes", removeUnmappedRows = TRUE)
+
+interactions_df <- string_db$get_interactions(genes_from_modules_mapped_to_string_db$STRING_id)
+
+plots <- show_plot(spinal_cord_object, "interaction")
+pdf(file = file.path(plot_dir, "09-04-plot-interaction-data-for-modules.pdf"))
+plots[1]
+plots[2]
+plots[3]
+plots[4]
+plots[5]
+plots[6]
+plots[7]
+dev.off()
+
+
+```

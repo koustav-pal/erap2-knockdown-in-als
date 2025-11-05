@@ -1,0 +1,343 @@
+---
+title:Microsatellite summary analysis
+output:pdf_document
+---
+
+
+### Main questions
+
+Investigate the survival probability of patients using ERAP2 expression
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/nemo/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis/11-postmortem-data-analysis` and include required packages 
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/export2/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis/")
+library("stringr")
+library("GenomicRanges")
+library("DESeq2")
+library("rtracklayer")
+library("ggplot2")
+library("GenomicFeatures")
+library("GenomeInfoDb")
+require("Rsamtools")
+require("STRINGdb")
+require("CEMiTool")
+
+
+```
+
+### 2.0 Include experiment matrix
+
+- Let's first import the counts.
+
+```{r include = FALSE, message = FALSE, warning = FALSE}
+
+analysis_path <- "11-postmortem-data-analysis"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+tmp_dir <- file.path(analysis_path, "tmp")
+dir.create(save_dir, recursive = T)
+dir.create(plot_dir, recursive = T)
+dir.create(input_dir, recursive = T)
+dir.create(output_dir, recursive = T)
+dir.create(tmp_dir, recursive = T)
+
+```
+
+### 3.0 Imports
+
+- Load genic counts list
+
+```{r}
+
+genic_count_list <- readRDS(file.path(save_dir, "01-gene-level-counts-of-postmortem-samples.rds"))
+
+```
+
+### Analysis
+
+- Read annotation
+
+```{r}
+
+annotation_gtf <- "/export2/home/koustav/Genomes/ENSEMBL_hg38/Homo_sapiens.GRCh38.104.chr_patch_hapl_scaff.gtf"
+annotation_ranges <- import.gff2(annotation_gtf)
+annotation_gene_ranges <- annotation_ranges[annotation_ranges$type == "gene"]
+
+```
+
+- Compute TPMs and filter data
+
+```{r}
+
+# feature_ranges_with_repeats <- significant_de_event_list$repeat_containing_ranges
+counts_matrix <- genic_count_list$counts 
+tpm_matrix <- counts_matrix / (width(annotation_gene_ranges[match(rownames(counts_matrix), annotation_gene_ranges$gene_id)]) / 1e3)
+tpm_matrix <- t(t(tpm_matrix) / (colSums(tpm_matrix) / 1e6))
+
+
+coldata_df <- genic_count_list$coldata
+coldata_df$expr <- tpm_matrix[annotation_gene_ranges$gene_id[annotation_gene_ranges$gene_name == "ERAP2" & !is.na(annotation_gene_ranges$gene_name)],
+    coldata_df$column_id]
+coldata_df$tissue_group <- "spinal_cord"
+coldata_df$tissue_group[coldata_df$tissue %in% c("Cortex_Motor", "Cortex", "Cerebellum")] <- "brain"
+
+subset_matrix <- as.data.frame(counts_matrix[rownames(counts_matrix) %in% 
+    annotation_gene_ranges$gene_id[annotation_gene_ranges$gene_biotype == "protein_coding"],])
+keep_matrix <- subset_matrix[(rowSums(subset_matrix == 0) / ncol(subset_matrix)) < 0.10,]
+
+
+```
+
+- Summarise data to patient level
+
+```{r}
+
+
+coldata_df$matrix_row <- match(coldata_df$column_id, colnames(keep_matrix))
+
+cols_split_by_patient <- split(coldata_df, paste(coldata_df$subject_id, coldata_df$tissue_group))
+
+patient_matrix <- do.call(cbind, lapply(cols_split_by_patient, function(x){
+    if(nrow(x) == 1){
+        return(keep_matrix[,x$matrix_row])
+    }
+    return(rowMeans(keep_matrix[,x$matrix_row]))
+}))
+# rownames(patient_matrix) <- annotation_ranges$gene_name[match(rownames(patient_matrix), annotation_ranges$gene_id)]
+
+
+patient_df <- do.call(rbind, lapply(cols_split_by_patient, function(temp_df){
+    return_df <- unique(temp_df[,!(colnames(temp_df) %in% 
+        c("X", "sample_name", "alignment_file", "alignment_file_dir",
+          "isPairedEnd", "strand_specificity", "samplesheet_path", 
+          "column_id", "sample_id", "mutation", "site_of_motor_onset",
+          "instrument", "rin", "expr", "tissue", "matrix_row"))])
+    if(nrow(return_df) > 1){
+        # message(paste(unique(return_df$subject_id), unique(return_df$tissue)))
+        if("N/A" %in% return_df$mnd_with_ftd & "Yes" %in% return_df$mnd_with_ftd){
+            return_df <- return_df[return_df$mnd_with_ftd == "Yes",]
+        }else if("N/A" %in% return_df$mnd_with_ftd & "No" %in% return_df$mnd_with_ftd){
+            return_df <- return_df[return_df$mnd_with_ftd == "No",]
+        }else{
+            stop(paste(return_df$subject_id, return_df$tissue))
+        }
+        # message(nrow(return_df))
+    }
+    return_df$expr <- mean(temp_df$expr)
+    return_df$column_id <- paste(return_df$subject_id, return_df$tissue_group)
+    return(return_df)
+}))
+patient_df$age_at_death[patient_df$age_at_death == "90 or Older"] <- "90"
+patient_df$age_at_death <- as.numeric(patient_df$age_at_death)
+patient_df$age_at_onset <- as.numeric(patient_df$age_at_symptom_onset)
+patient_df$disease_duration_in_months <- as.numeric(patient_df$disease_duration_in_months)
+patient_df$disease_duration <- as.numeric(patient_df$disease_duration_in_months)
+
+
+```
+
+- Perform CemiTool analysis with the subset of patients who had disease duration less than 12 months
+
+```{r}
+
+
+tissue_level_connectivity_list <- lapply(unique(patient_df$tissue_group), function(a_tissue){
+    current_patients_df <- patient_df[patient_df$tissue_group == a_tissue &
+        # patient_df$disease_duration_in_months <= 12 & 
+        !is.na(patient_df$disease_duration_in_months),]
+        message(nrow(current_patients_df))
+    # als_patient_expr_quantiles <- quantile(current_patients_df$expr[current_patients_df$condition != "ctrl"], c(0.9))
+    anno_df <- current_patients_df
+    # [
+    #     current_patients_df$disease_duration_in_months <= 12 & 
+    #     !is.na(current_patients_df$disease_duration_in_months) &
+    #     current_patients_df$expr > als_patient_expr_quantiles,]
+    keep_matrix_df <- as.data.frame(patient_matrix[,anno_df$column_id])
+    cem <- cemitool(keep_matrix_df, annot = anno_df, 
+        apply_vst = T, 
+        sample_name_column = "column_id", class_column = "condition")
+    return(cem)
+})
+names(tissue_level_connectivity_list) <- unique(patient_df$tissue_group)
+
+# Fetch modules
+module_df <- do.call(rbind, lapply(names(tissue_level_connectivity_list), function(x){
+    message(x)
+    temp_object <- tissue_level_connectivity_list[[x]]
+    module_list <- module_genes(temp_object)
+    return_df <- module_list
+    return(return_df)
+}))
+module_df$gene_name <- annotation_ranges$gene_name[match(module_df$genes, annotation_ranges$gene_id)]
+
+
+# genes_in_same_module <- unique(module_df$genes)
+
+saveRDS(object = module_df, file = file.path(save_dir, "04-postmortem-WGCNA-gene-modules.rds"))
+
+
+```
+
+
+- Perform gene set enrichment for each module
+
+```{r}
+
+unloadNamespace("enrichR")
+require("enrichR")
+
+module_df <- readRDS(file.path(save_dir, "04-postmortem-WGCNA-gene-modules.rds"))
+gene_split <- split(module_df, module_df$modules)
+
+dbs <- "GO_Biological_Process_2023"
+groups <- names(gene_split)
+module_enrichment_df <- do.call(rbind, lapply(groups, function(a_group){
+    a_temp_df <- gene_split[[a_group]]
+        db_df_list <- lapply(dbs, function(a_database){
+            message(paste(a_database, a_group))
+            current_genes <- a_temp_df$gene_name[a_temp_df$modules == a_group]
+            an_enrichment_df <- enrichr(current_genes,  a_database)[[1]]
+            if(nrow(an_enrichment_df) == 0){
+                return(NULL)
+            }
+            an_enrichment_df$num_gene <- length(current_genes)
+            an_enrichment_df$db <- a_database
+            Sys.sleep(5)
+            return(an_enrichment_df)
+        })
+        db_df <- do.call(rbind, db_df_list)
+    db_df$modules <- a_group
+    return(db_df)
+}))
+
+
+module_enrichment_df$gene_ratio <- vapply(module_enrichment_df$Overlap, function(x){
+    eval(parse(text = x))
+},1)
+
+write.csv(x = module_enrichment_df, file = file.path(output_dir, "09-02-gene-set-enrichment-analysis-of-coexpression-modules.csv"))
+write.csv(x = module_enrichment_df[module_enrichment_df$P.value < 0.05,], file = file.path(output_dir, "09-02-significant-gene-set-enrichment-analysis-of-coexpression-modules.csv"))
+
+# significant_gene_set_enrichment <- lapply(split(module_enrichment_df, module_enrichment_df$modules), function(temp_df){
+#     return_df <- temp_df[temp_df$P.value < 0.05 & temp_df$gene_ratio > 0.1,]
+#     return_df[order(return_df$gene_ratio, decreasing = T),][1:10,]
+# })
+
+```
+
+- Plot gene set enrichment results
+
+```{r}
+
+require(patchwork)
+require(cowplot)
+
+
+    my_theme <- theme(
+        legend.position = "bottom",
+        text = element_text(size = 12),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(size = 10),
+        plot.background = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(colour = "azure3",
+        linetype = "dashed",
+        size = 0.2))
+
+module_enrichment_split <- split(module_enrichment_df, module_enrichment_df$modules)
+module_enrichment_split <- module_enrichment_split[names(module_enrichment_split) != "Not.Correlated"]
+
+plot_list <- lapply(module_enrichment_split, function(temp_df){
+    message(unique(temp_df$modules))
+    significant_df <- temp_df[temp_df$Adjusted.P.value < 0.05 & temp_df$gene_ratio > 0.1,]
+    significant_df <- significant_df[order(significant_df$gene_ratio, decreasing = T),][1:10,]
+    significant_df$label <- vapply(str_split(significant_df$Term, pattern = " "), function(x){
+        paste(x[-length(x)], collapse = " ")
+    },"1")
+
+    significant_df$label <- factor(significant_df$label, levels = significant_df$label[order(significant_df$gene_ratio, decreasing = F)])
+    ThePlot_1 <- ggplot(significant_df, aes(x = -log10(P.value), y = label))
+    # ThePlot <- ThePlot + geom_boxplot(aes(fill = direction), colour = "#000000", 
+    #     width = 0.5, lwd = 0.5)
+    ThePlot_1 <- ThePlot_1 + geom_point(fill = "#F4AC45", colour = "#000000", shape = 21)
+    # ThePlot <- ThePlot + geom_hline(aes(yintercept = 1), colour = "#000000", lty = "dashed")
+    ThePlot_1 <- ThePlot_1 + scale_x_continuous("-log10 pvalue")
+    ThePlot_1 <- ThePlot_1 + scale_y_discrete("Enriched terms in each module")
+    ThePlot_1 <- ThePlot_1 + theme_bw()
+    ThePlot_1 <- ThePlot_1 + ggtitle(unique(significant_df$modules))
+    ThePlot_1 <- ThePlot_1 + my_theme
+})
+
+all_plots <- wrap_plots(plot_list, nrow = 3, ncol = 3)
+save_plot(ncol = 3, nrow = 3, 
+    base_width = 8, base_height = 5,
+    file = file.path(plot_dir, "09-03-plot-gene-set-enrichment-of-modules.pdf"), plot = all_plots)
+
+```
+
+- Get the STRING network
+
+
+```{r}
+
+require("STRINGdb")
+require("ggrepel")
+source("11-postmortem-data-analysis/scripts/src/cemitools_network_plotting_functions.R")
+
+
+string_db <- STRINGdb$new(version = "11.5", species = 9606, score_threshold = 200, input_directory = tmp_dir)
+genes_from_modules_mapped_to_string_db <- string_db$map(module_df, "genes", removeUnmappedRows = TRUE)
+
+interactions_df <- string_db$get_interactions(genes_from_modules_mapped_to_string_db$STRING_id)
+
+cemi_interaction_df <- data.frame(
+    gene1symbol = genes_from_modules_mapped_to_string_db[match(interactions_df$from, genes_from_modules_mapped_to_string_db$STRING_id),"genes"],
+    gene2symbol = genes_from_modules_mapped_to_string_db[match(interactions_df$to, genes_from_modules_mapped_to_string_db$STRING_id),"genes"])
+
+spinal_cord_object <- tissue_level_connectivity_list[["spinal_cord"]]
+
+interactions_data(spinal_cord_object) <- cemi_interaction_df
+
+interactions_list <- spinal_cord_object@interactions
+modified_interactions_list <- lapply(interactions_list, function(x){
+    igraph::V(x)$name <- annotation_ranges$gene_name[match(igraph::V(x)$name, annotation_ranges$gene_id)]
+    x
+})
+spinal_cord_object@interactions <- modified_interactions_list
+
+spinal_cord_object <- plot_interactions(spinal_cord_object, label_genes = c("ERAP2"))
+
+plots <- show_plot(spinal_cord_object, "interaction")
+pdf(file = file.path(plot_dir, "09-04-plot-interaction-data-for-modules.pdf"))
+plots[1]
+plots[2]
+plots[3]
+plots[4]
+plots[5]
+plots[6]
+plots[7]
+dev.off()
+
+```
+
+- Check overlap with ALSoD genes
+
+
+```{r}
+alsod_gene_list <- read.csv("../data_files/alsod_genelist.csv")
+
+all_module_genes <- union(module_df$gene_name, alsod_gene_list$gene_name)
+intersect_df <- data.frame(genes = all_module_genes, 
+    pm_module = all_module_genes %in% module_df$gene_name,
+    ALSoD = all_module_genes %in% alsod_gene_list$gene_name)
+
+```

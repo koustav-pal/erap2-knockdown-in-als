@@ -1,0 +1,397 @@
+---
+title:ERAP2 knockdown in astrocytes
+output:pdf_document
+---
+
+
+### Main questions
+
+We set out to understand the role of ERAP2 in ALS. The main questions that have been defined until now are,
+
+- What is the effect of ERAP2 siRNA in control lines?
+- What is the effect between control and ALS lines? 
+- What is the effect of ERAP2 siRNA on ALS lines? 
+
+### 1.0 Package requirements
+
+- Include required packages 
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+require("stringr")
+require("DESeq2")
+require("MASS")
+require("apeglm")
+require("PCAtools")
+require("rtracklayer")
+require("limma")
+require("edgeR")
+require("DESeq2")
+
+```
+
+
+- change to current working directory `/camp/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis`.
+
+```{r}
+
+setwd("/camp/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis")
+
+rdata_dir <- "15-erap2-kd-rnaseq/rdata_files/"
+output_dir <- "15-erap2-kd-rnaseq/output_files/"
+input_dir <- "15-erap2-kd-rnaseq/input_files/"
+plot_dir <- "15-erap2-kd-rnaseq/plots/"
+tmp_dir <- "15-erap2-kd-rnaseq/tmp/"
+if(!(file.exists(plot_dir))){
+    dir.create(plot_dir)
+}
+if(!(file.exists(input_dir))){
+    dir.create(input_dir)
+}
+if(!(file.exists(output_dir))){
+    dir.create(output_dir)
+}
+if(!(file.exists(rdata_dir))){
+    dir.create(rdata_dir)
+}
+if(!(file.exists(tmp_dir))){
+    dir.create(tmp_dir)
+}
+
+```
+
+### 2.0 Import data
+
+- Read differentially expressed genes 
+
+```{r}
+
+differentially_expressed_events_df <- read.csv(file.path(output_dir, "01-differentially-expressed-events-pvalue-lt-0.05.csv"))
+
+differential_list <- readRDS(file.path(rdata_dir, "01-DESeq2-merged-differentially-expressed-objects.rds"))
+de_object <- differential_list$differential_object
+annotation_df <- differential_list$annotation
+
+differentially_expressed_events_df$X <- vapply(str_split(string = differentially_expressed_events_df$X, pattern = "\\."), function(x){
+    x[1]
+},"1")
+als_vs_control_genes <- differentially_expressed_events_df[differentially_expressed_events_df$contrast %in% c("als_vs_ctrl"),"X"]
+erap2_kd_effect_in_als <- differentially_expressed_events_df[differentially_expressed_events_df$contrast %in% c("erap2_kd_effect_in_als"),"X"]
+
+
+# intersect(erap2_kd_effect_in_als, als_vs_control_genes)
+
+
+significantly_affected_genes <- als_vs_control_genes
+
+# intersect(differentially_expressed_events_df$gene_name[differentially_expressed_events_df$contrast == "als_vs_ctrl"],
+#     differentially_expressed_events_df$gene_name[differentially_expressed_events_df$contrast == "erap2_kd_effect_in_als"])
+
+model_matrix <- model.matrix(design(de_object), colData(de_object))
+als_vs_control <- colMeans(model_matrix[de_object$ERAP == "CTRL" & 
+    de_object$condition == "ALS",]) - colMeans(model_matrix[de_object$ERAP == "CTRL" & 
+    de_object$condition == "Control",])
+de_object_als_vs_ctrl <- results(de_object, contrast = als_vs_control)
+
+erap2_kd_in_als <- colMeans(model_matrix[de_object$ERAP == "ERAP2" & de_object$condition == "ALS",]) - colMeans(model_matrix[de_object$ERAP == "CTRL" & de_object$condition == "ALS",])
+de_object_erap2_kd_als <- results(de_object, contrast = erap2_kd_in_als)
+
+
+scatter_df <- data.frame(
+    gene_id = rownames(de_object_als_vs_ctrl),
+    gene_name = annotation_df$gene_name[match(rownames(de_object_als_vs_ctrl), annotation_df$gene_id)],
+    als_vs_ctrl_logfc = de_object_als_vs_ctrl$log2FoldChange,
+    als_vs_ctrl_pval = de_object_als_vs_ctrl$pvalue,
+    erap2_kd_in_als_logfc = de_object_erap2_kd_als$log2FoldChange,
+    erap2_kd_in_als_pval = de_object_erap2_kd_als$pvalue)
+scatter_df$significantly_affected <- scatter_df$gene_id %in% significantly_affected_genes
+scatter_df <- scatter_df[!is.na(scatter_df$als_vs_ctrl_logfc) & !is.na(scatter_df$erap2_kd_in_als_logfc),]
+
+scatter_df$pair_group <- "None"
+scatter_df$pair_group[scatter_df$als_vs_ctrl_logfc < 0 & scatter_df$erap2_kd_in_als_logfc > 0] <- "down->up"
+scatter_df$pair_group[scatter_df$als_vs_ctrl_logfc > 0 & scatter_df$erap2_kd_in_als_logfc < 0] <- "up->down"
+scatter_df$pair_group[scatter_df$als_vs_ctrl_logfc > 0 & scatter_df$erap2_kd_in_als_logfc > 0] <- "up->up"
+scatter_df$pair_group[scatter_df$als_vs_ctrl_logfc < 0 & scatter_df$erap2_kd_in_als_logfc < 0] <- "down->down"
+
+write.csv(x = scatter_df, file = file.path(output_dir, "02-pairwise-grouped-differentially-expressed-events-pvalue-lt-0.05.csv"))
+
+
+```
+
+### Frequency of differential expression
+
+```{r}
+
+frequency_df <- as.data.frame(table(differentially_expressed_events_df$contrast, differentially_expressed_events_df$direction))
+colnames(frequency_df) <- c("contrast", "direction", "frequency")
+frequency_df <- frequency_df[!(frequency_df$contrast %in% c("effect_of_erap2_kd_in_als_vs_ctrl", "genetic_effect_of_als")),]
+frequency_df$contrast <- factor(frequency_df$contrast, levels = c("als_vs_ctrl", "erap2_kd_effect_in_control", "erap2_kd_effect_in_als"))
+prop_df <- do.call(rbind, lapply(split(frequency_df, frequency_df$contrast), function(x){
+    x <- x[rev(order(x$direction)),]
+    x$prop <- x$frequency / sum(x$frequency)
+    x$lab_y <-  cumsum(x$prop) - (0.5 * x$prop)
+    return(x)
+}))
+
+```
+
+- Plot frequency plots
+
+```{r}
+
+require("ggplot2")
+
+my_theme <- theme(legend.position = "bottom",
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 8, hjust = 1, angle = 45),
+    axis.text.y = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "azure3",
+    linetype = "dashed", size = 0.2))
+
+Colours <- c("up" = "#D81E5B", "down" = "#3993DD")
+the_plot <- ggplot(prop_df, aes(x = contrast, y = prop))
+the_plot <- the_plot + geom_col(aes(fill = direction), colour = "#000000")
+the_plot <- the_plot + geom_text(data = prop_df, aes(x = contrast, y = lab_y, label = frequency), colour = "#000000")
+the_plot <- the_plot + scale_x_discrete("comparisons")
+the_plot <- the_plot + scale_y_continuous("log10 frequency of differential expression")
+the_plot <- the_plot + scale_fill_manual("lfc direction", values = Colours)
+the_plot <- the_plot + theme_bw()
+the_plot <- the_plot + my_theme
+ggsave(the_plot, file = file.path(plot_dir, "01-01-plot-frequency-of-differential-expression.pdf"), height = 9, width = 3)
+
+```
+
+
+
+
+- Plot scatter plot
+
+
+```{r}
+
+
+model <- lm(data = scatter_df,
+    formula = erap2_kd_in_als_logfc ~ als_vs_ctrl_logfc)
+# Call:
+# lm(formula = erap2_kd_in_als_logfc ~ als_vs_ctrl_logfc, data = scatter_df)
+
+# Residuals:
+#      Min       1Q   Median       3Q      Max
+# -19.1749  -0.3604  -0.0513   0.2498   5.2815
+
+# Coefficients:
+#                    Estimate Std. Error t value Pr(>|t|)
+# (Intercept)        0.068446   0.004524   15.13   <2e-16 ***
+# als_vs_ctrl_logfc -0.313108   0.004389  -71.33   <2e-16 ***
+# ---
+# Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+# Residual standard error: 0.8351 on 34413 degrees of freedom
+# Multiple R-squared:  0.1288,    Adjusted R-squared:  0.1288
+# F-statistic:  5089 on 1 and 34413 DF,  p-value: < 2.2e-16
+
+Colours <- c("down->up" = "#FB3640", "up->down" = "#247BA0",
+    "down->down" = "#72A3C0", "up->up" = "#E0777D")
+
+    my_theme <- theme(
+        legend.position = "bottom",
+        text = element_text(size = 12),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(size = 10),
+        plot.background = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(colour = "azure3",
+        linetype = "dashed",
+        size = 0.2))
+
+    ThePlot_1 <- ggplot(scatter_df[!scatter_df$significantly_affected,], aes(x = als_vs_ctrl_logfc, y = erap2_kd_in_als_logfc))
+    # ThePlot <- ThePlot + geom_boxplot(aes(fill = direction), colour = "#000000", 
+    #     width = 0.5, lwd = 0.5)
+    ThePlot_1 <- ThePlot_1 + geom_hline(yintercept = 0, lty = "dashed")
+    ThePlot_1 <- ThePlot_1 + geom_vline(xintercept = 0, lty = "dashed")
+    ThePlot_1 <- ThePlot_1 + geom_point(color = "azure3", alpha = 0.4)
+    ThePlot_1 <- ThePlot_1 + geom_smooth(data = scatter_df, method = "lm", formula = y ~ x, lty = "dashed", colour = "#000000")
+    ThePlot_1 <- ThePlot_1 + geom_point(data = scatter_df[scatter_df$significantly_affected,], aes(colour = pair_group))
+    # ThePlot <- ThePlot + geom_hline(aes(yintercept = 1), colour = "#000000", lty = "dashed")
+    ThePlot_1 <- ThePlot_1 + scale_x_continuous("ALS vs control log2fc", limits = c(-10, 10))
+    ThePlot_1 <- ThePlot_1 + scale_y_continuous("ERAP2 KD in ALS log2fc", limits = c(-10, 10))
+    ThePlot_1 <- ThePlot_1 + scale_colour_manual("direction", values = Colours)
+    ThePlot_1 <- ThePlot_1 + theme_bw()
+    ThePlot_1 <- ThePlot_1 + ggtitle("Exacerbated and ameliorated genes")
+    ThePlot_1 <- ThePlot_1 + my_theme
+
+ggsave(width = 10, height = 10, file = file.path(plot_dir, "04-01-plot-scatter-plot-of-log2foldchange-als-vs-control-and-erap2-kd-in-als.pdf"), ThePlot_1)
+
+
+```
+
+- Perform gene set enrichment
+
+```{r}
+
+significantly_affected <- scatter_df[scatter_df$significantly_affected,]
+require("enrichR")
+protein_split <- split(significantly_affected, significantly_affected$pair_group)
+
+dbs <- "GO_Biological_Process_2023"
+groups <- names(protein_split)
+kd_geneset_enrichment_df <- do.call(rbind, lapply(groups, function(a_group){
+    a_temp_df <- protein_split[[a_group]]
+    db_df_list <- lapply(dbs, function(a_database){
+        message(paste(a_database, a_group))
+        current_genes <- a_temp_df$gene_name
+        an_enrichment_df <- enrichr(current_genes,  a_database)[[1]]
+        if(nrow(an_enrichment_df) == 0){
+            return(NULL)
+        }
+        an_enrichment_df$num_gene <- length(current_genes)
+        an_enrichment_df$db <- a_database
+        Sys.sleep(5)
+        return(an_enrichment_df)
+    })
+    db_df <- do.call(rbind, db_df_list)
+    db_df$pair_group <- a_group
+    return(db_df)
+}))
+
+
+kd_geneset_enrichment_df$gene_ratio <- vapply(kd_geneset_enrichment_df$Overlap, function(x){
+    eval(parse(text = x))
+},1)
+significant_gene_set_enrichment <- kd_geneset_enrichment_df[kd_geneset_enrichment_df$P.value < 0.05,]
+annotated_gene_set_enrichment_df <- read.csv("14-erap2-kd-proteomics/output_files/04-annotated-pairwise-groups-gene-set-enrichment-with-go-bp.csv")
+significant_gene_set_enrichment$Group <- annotated_gene_set_enrichment_df[match(significant_gene_set_enrichment$Term, annotated_gene_set_enrichment_df$Term),"Group"]
+# split(significant_gene_set_enrichment$Term, significant_gene_set_enrichment$pair_group)
+write.csv(significant_gene_set_enrichment, file = file.path(output_dir, "04-gene-set-enrichment-with-go-bp.csv"))
+
+```
+
+- Read annotated gene set enrichment table
+
+```{r}
+
+require("ggplot2")
+require("ggbeeswarm")
+
+return_plots_for_top_terms <- function(temp_df, top = 10){
+
+
+    Colours <- c("down->up" = "#FB3640", "up->down" = "#247BA0",
+        "down->down" = "#72A3C0", "up->up" = "#E0777D")
+
+    down_up_terms_df <- temp_df[temp_df$pair_group == "down->up",]
+
+
+
+
+    my_theme <- theme(
+        legend.position = "bottom",
+        text = element_text(size = 12),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(size = 10),
+        plot.background = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(colour = "azure3",
+        linetype = "dashed",
+        size = 0.2))
+
+    median_gene_ratio <- vapply(split(down_up_terms_df$gene_ratio, down_up_terms_df$Group), length, 1)
+    down_up_terms_df$Group <- factor(down_up_terms_df$Group, 
+        levels = names(median_gene_ratio[order(median_gene_ratio, decreasing = F)]))
+    keep_levels <- levels(down_up_terms_df$Group)
+    keep_levels <- keep_levels[keep_levels != "Other Processes"]
+
+    ThePlot_1 <- ggplot(down_up_terms_df[down_up_terms_df$Group %in% rev(keep_levels)[1:top],], aes(x = -log10(P.value), y = Group))
+    # ThePlot <- ThePlot + geom_boxplot(aes(fill = direction), colour = "#000000", 
+    #     width = 0.5, lwd = 0.5)
+    ThePlot_1 <- ThePlot_1 + geom_quasirandom(fill = "#FB3640", colour = "#000000", shape = 21)
+    # ThePlot <- ThePlot + geom_hline(aes(yintercept = 1), colour = "#000000", lty = "dashed")
+    ThePlot_1 <- ThePlot_1 + scale_x_continuous("-log10 pvalue")
+    ThePlot_1 <- ThePlot_1 + scale_y_discrete("down->up terms from GO:BP")
+    # ThePlot_1 <- ThePlot_1 + scale_fill_manual("direction", values = c("Ameliorated" = "#FB3640", "Abrogated" = "#4C86A8"))
+    ThePlot_1 <- ThePlot_1 + theme_bw()
+    ThePlot_1 <- ThePlot_1 + ggtitle("down->up")
+    ThePlot_1 <- ThePlot_1 + my_theme
+
+
+    up_up_terms_df <- temp_df[temp_df$pair_group == "up->up",]
+    median_gene_ratio <- vapply(split(up_up_terms_df$gene_ratio, up_up_terms_df$Group), length, 1)
+    up_up_terms_df$Group <- factor(up_up_terms_df$Group, 
+        levels = names(median_gene_ratio[order(median_gene_ratio, decreasing = F)]))
+    keep_levels <- levels(up_up_terms_df$Group)
+    keep_levels <- keep_levels[keep_levels != "Other Processes"]
+
+    ThePlot_2 <- ggplot(up_up_terms_df[up_up_terms_df$Group %in% rev(keep_levels)[1:top],], aes(x = -log10(P.value), y = Group))
+    # ThePlot <- ThePlot + geom_boxplot(aes(fill = direction), colour = "#000000", 
+    #     width = 0.5, lwd = 0.5)
+    ThePlot_2 <- ThePlot_2 + geom_quasirandom(fill = "#E0777D", colour = "#000000", shape = 21)
+    # ThePlot <- ThePlot + geom_hline(aes(yintercept = 1), colour = "#000000", lty = "dashed")
+    ThePlot_2 <- ThePlot_2 + scale_x_continuous("-log10 pvalue")
+    ThePlot_2 <- ThePlot_2 + scale_y_discrete("up->up terms from GO:BP")
+    # ThePlot_2 <- ThePlot_2 + scale_fill_manual("direction", values = c("Ameliorated" = "#E0777D", "Abrogated" = "#4C86A8"))
+    ThePlot_2 <- ThePlot_2 + theme_bw()
+    ThePlot_2 <- ThePlot_2 + ggtitle("up->up")
+    ThePlot_2 <- ThePlot_2 + my_theme
+
+
+    down_down_terms_df <- temp_df[temp_df$pair_group == "down->down",]
+    median_gene_ratio <- vapply(split(down_down_terms_df$gene_ratio, down_down_terms_df$Group), length, 1)
+    down_down_terms_df$Group <- factor(down_down_terms_df$Group, 
+        levels = names(median_gene_ratio[order(median_gene_ratio, decreasing = F)]))
+    keep_levels <- levels(down_down_terms_df$Group)
+    keep_levels <- keep_levels[keep_levels != "Other Processes"]
+
+    ThePlot_3 <- ggplot(down_down_terms_df[down_down_terms_df$Group %in% rev(keep_levels)[1:top],], aes(x = -log10(P.value), y = Group))
+    # ThePlot <- ThePlot + geom_boxplot(aes(fill = direction), colour = "#000000", 
+    #     width = 0.5, lwd = 0.5)
+    ThePlot_3 <- ThePlot_3 + geom_quasirandom(fill = "#72A3C0", colour = "#000000", shape = 21)
+    # ThePlot <- ThePlot + geom_hline(aes(yintercept = 1), colour = "#000000", lty = "dashed")
+    ThePlot_3 <- ThePlot_3 + scale_x_continuous("-log10 pvalue")
+    ThePlot_3 <- ThePlot_3 + scale_y_discrete("down->down terms from GO:BP")
+    # ThePlot_2 <- ThePlot_2 + scale_fill_manual("direction", values = c("Ameliorated" = "#E0777D", "Abrogated" = "#4C86A8"))
+    ThePlot_3 <- ThePlot_3 + theme_bw()
+    ThePlot_3 <- ThePlot_3 + ggtitle("down->down")
+    ThePlot_3 <- ThePlot_3 + my_theme
+
+
+    up_down_terms_df <- temp_df[temp_df$pair_group == "up->down",]
+    median_gene_ratio <- vapply(split(up_down_terms_df$gene_ratio, up_down_terms_df$Group), length, 1)
+    up_down_terms_df$Group <- factor(up_down_terms_df$Group, 
+        levels = names(median_gene_ratio[order(median_gene_ratio, decreasing = F)]))
+    keep_levels <- levels(up_down_terms_df$Group)
+    keep_levels <- keep_levels[keep_levels != "Other Processes"]
+
+    ThePlot_4 <- ggplot(up_down_terms_df[up_down_terms_df$Group %in% rev(keep_levels)[1:top],], aes(x = -log10(P.value), y = Group))
+    # ThePlot <- ThePlot + geom_boxplot(aes(fill = direction), colour = "#000000", 
+    #     width = 0.5, lwd = 0.5)
+    ThePlot_4 <- ThePlot_4 + geom_quasirandom(fill = "#247BA0", colour = "#000000", shape = 21)
+    # ThePlot <- ThePlot + geom_hline(aes(yintercept = 1), colour = "#000000", lty = "dashed")
+    ThePlot_4 <- ThePlot_4 + scale_x_continuous("-log10 pvalue")
+    ThePlot_4 <- ThePlot_4 + scale_y_discrete("up->down terms from GO:BP")
+    # ThePlot_2 <- ThePlot_2 + scale_fill_manual("direction", values = c("Ameliorated" = "#E0777D", "Abrogated" = "#4C86A8"))
+    ThePlot_4 <- ThePlot_4 + theme_bw()
+    ThePlot_4 <- ThePlot_4 + ggtitle("up->down")
+    ThePlot_4 <- ThePlot_4 + my_theme
+
+    require("patchwork")
+    ThePlot <- (ThePlot_1 | ThePlot_2) / (ThePlot_3 |  ThePlot_4)
+    return(ThePlot)
+}
+
+annotated_gene_set_enrichment_df <- read.csv(file.path(output_dir, "04-annotated-gene-set-enrichment-with-go-bp.csv"))
+
+enrichment_plot <- return_plots_for_top_terms(annotated_gene_set_enrichment_df)
+
+ggsave(width = 10, height = 12, file = file.path(plot_dir, "03-01-plot-ameliorated-vs-abrogated-gene-set-enrichment-using-gobp.pdf"), enrichment_plot)
+
+```
+
+

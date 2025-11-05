@@ -1,0 +1,120 @@
+---
+title:ERAP2 knockdown in astrocytes
+output:pdf_document
+---
+
+
+### Main questions
+
+We set out to understand the role of ERAP2 in ALS. The main questions that have been defined until now are,
+
+- What is the effect of ERAP2 siRNA in control lines?
+- What is the effect between control and ALS lines? 
+- What is the effect of ERAP2 siRNA on ALS lines? 
+
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/camp/lab/luscomben/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis`.
+
+```{r}
+
+setwd("/camp/lab/luscomben/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis")
+
+```
+
+
+- Include required packages and functions
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+require("stringr")
+require("DESeq2")
+require("ggplot2")
+require("RcolorBrewer")
+require("stringr")
+
+
+```
+
+- Set paths
+
+```{r}
+
+analysis_path <- "02-differential-expression-profiling"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+
+```
+
+
+- Load the candidate gene selection from previous steps
+
+
+```{r}
+
+candidate_genes_df <- readRDS(file.path(save_dir, "02-significantly-affected-genes-by-kd-in-als-vs-control.rds"))
+
+```
+
+### 1.0 What is the cumulative effect of ERAP2 KD
+
+- Reform data frame to make groups from columns 
+
+
+```{r}
+
+plot_df <- do.call(rbind, lapply(seq_len(nrow(candidate_genes_df)), function(x){
+        temp_df <- candidate_genes_df[x,]
+        new_df <- temp_df[,c(2,4,5,6)]
+        new_quant_df <- data.frame(group = c(1, 2, 3), 
+                value = c(temp_df$logfc, temp_df$kd_effect_lfc, temp_df$als_vs_ctrl_kd_effect_lfc))
+        new_quant_df$direction <- ifelse(new_quant_df$value < 0, "down", "up")
+        return(cbind(new_df, new_quant_df))
+}))
+
+
+```
+
+- Make two sample gene-set enrichment plots
+
+
+```{r}
+
+Breaks <- c(1, 2, 3)
+Labels <- c("ALS vs Control", "ERAP2 KD effect in ALS", "ERAP2 KD effect on ALS vs Control")
+
+
+Colours <- c("up" = "#D81E5B", "down" = "#3993DD")
+the_plot <- ggplot(plot_df, aes(x = group, y = value))
+the_plot <- the_plot + geom_line(shape = 21, colour = "#F7F7F9", aes(group = gene_ids))
+the_plot <- the_plot + geom_point(shape = 21, colour = "#000000", aes(fill = direction))
+the_plot <- the_plot + geom_violin(aes(group = group), fill = "#EAE6E5", colour = "#000000", 
+        lwd = 0.5, alpha = 0.4)
+the_plot <- the_plot + geom_boxplot(aes(group = group), fill = "#EAE6E5", colour = "#000000", 
+        width = 0.1, lwd = 0.5, alpha = 0.4, outlier.size = NA, outlier.shape = NA)
+the_plot <- the_plot + scale_x_continuous("Comparisons", breaks = Breaks, labels = Labels)
+the_plot <- the_plot + scale_y_continuous("log2 fold change")
+the_plot <- the_plot + scale_fill_manual("lfc direction", values = Colours)
+the_plot <- the_plot + theme_bw()
+the_plot <- the_plot + theme(
+        legend.position = "bottom",
+        text = element_text(size = 12),
+        axis.text.x = element_text(size = 8, hjust = 1, angle = 45),
+        axis.text.y = element_text(size = 12),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(size = 10),
+        plot.background = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(colour = "azure3",
+        linetype = "dashed", size = 0.2))
+ggsave(the_plot, file = file.path(plot_dir, "08-summary-plot-showing-amelioration-of-ERAP2-phenotype.pdf"), height = 7, width = 7)
+
+
+```
+
+
+
+

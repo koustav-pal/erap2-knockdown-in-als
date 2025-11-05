@@ -1,0 +1,321 @@
+---
+title:ERAP2 knockdown in astrocytes
+output:pdf_document
+---
+
+
+### Main questions
+
+We set out to understand the role of ERAP2 in ALS. The main questions that have been defined until now are,
+
+- What is the effect of ERAP2 siRNA in control lines?
+- What is the effect between control and ALS lines? 
+- What is the effect of ERAP2 siRNA on ALS lines? 
+
+### 1.0 Package requirements
+
+- Include required packages 
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+require("stringr")
+require("DESeq2")
+require("MASS")
+require("apeglm")
+require("PCAtools")
+require("rtracklayer")
+
+```
+
+
+- change to current working directory `/export2/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis/`.
+
+```{r}
+
+setwd("/export2/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis/")
+
+rdata_dir <- "02-01-differential-expression-profiling/rdata_files/"
+output_dir <- "02-01-differential-expression-profiling/output_files/"
+input_dir <- "02-01-differential-expression-profiling/input_files/"
+plot_dir <- "02-01-differential-expression-profiling/plots/"
+tmp_dir <- "02-01-differential-expression-profiling/tmp/"
+if(!(file.exists(plot_dir))){
+    dir.create(plot_dir)
+}
+if(!(file.exists(input_dir))){
+    dir.create(input_dir)
+}
+if(!(file.exists(output_dir))){
+    dir.create(output_dir)
+}
+if(!(file.exists(rdata_dir))){
+    dir.create(rdata_dir)
+}
+if(!(file.exists(tmp_dir))){
+    dir.create(tmp_dir)
+}
+
+```
+
+
+
+### 2.0 Include experiment matrix
+
+- Let's first include the reactivity gene expression matrix and the supplied experiment matrix.
+
+```{r include = FALSE, message = FALSE, warning = FALSE}
+
+experiment_matrix_df <- data.table::fread("01-erap2-overexpression-alignments/input_files/nfcore_sampleinfo.csv", data.table = F)
+experiment_matrix_df$ERAP <- str_split(experiment_matrix_df$sample, pattern = "_", simplify = T)[,2]
+experiment_matrix_df$replicate <- str_split(experiment_matrix_df$sample, pattern = "_", simplify = T)[,1]
+experiment_matrix_df$ERAP <- factor(experiment_matrix_df$ERAP, levels = c("Un", "ssGFP", "ERAP2"))
+experiment_matrix_df <- unique(experiment_matrix_df[,c("sample","ERAP")])
+
+```
+
+### 3.0 Perform differential expression profiling
+
+- Import counts matrix
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+gene_expression_matrix <- read.table("01-erap2-overexpression-alignments/nfcore/star_rsem/rsem.merged.gene_counts.tsv", header = T)
+rownames(gene_expression_matrix) <- gene_expression_matrix[,1]
+gene_expression_matrix <- gene_expression_matrix[,match(experiment_matrix_df$sample, colnames(gene_expression_matrix))]
+
+```
+
+- Perform differential expression profiling in whole cells 
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+dds <- DESeqDataSetFromMatrix(
+    countData = round(gene_expression_matrix),
+    colData = experiment_matrix_df,
+    design = ~ ERAP)
+de_object <- DESeq(dds)
+dds_vst <- assay(vst(dds))
+
+de_object_erap2_ssgfp_ctrl <- results(de_object, contrast = c("ERAP", "ssGFP", "Un"))
+
+de_object_erap2_vs_un <- results(de_object, contrast = c("ERAP", "ERAP2", "Un"))
+
+de_object_effect_of_erap2 <- results(de_object, contrast = list("ERAP_ERAP2_vs_Un", "ERAP_ssGFP_vs_Un"))
+
+all_de_object_list <- list(
+    "ssgfp_overexpression" = de_object_erap2_ssgfp_ctrl,
+    "erap2_vs_untx" = de_object_erap2_vs_un,
+    "erap2_overexpression_effect" = de_object_effect_of_erap2)
+
+saveRDS(object = list(vst_matrix = dds_vst, 
+    differential_object = de_object,
+    contrasts = all_de_object_list),
+    file = file.path(rdata_dir, "01-erap2-overexpression-differentially-expressed-objects.rds"))
+
+```
+
+
+### Load annotation file
+
+- Load ensembl annotation gtf.
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+annotation_gtf <- "/export2/home/koustav/Genomes/ENSEMBL_hg38/Homo_sapiens.GRCh38.104.chr_patch_hapl_scaff.gtf"
+annotation_ranges <- import.gff2(annotation_gtf)
+annotation_gene_ranges <- annotation_ranges[annotation_ranges$type == "gene"]
+
+```
+
+### 4.0 Perform PCA analysis
+
+- Perform Plot of deseq2 object 
+
+
+```{r fig.cap = "PCA plot of DESeq2 samples differentially expressed genes", include = FALSE, message = FALSE, warning = FALSE}
+
+
+# rownames(dds_vst) <- annotation_gene_ranges$gene_name[match(rownames(dds_vst), annotation_gene_ranges$gene_id)]
+pca_object <- pca(dds_vst, metadata = colData(dds), removeVar = 0.1)
+
+new_names <- annotation_gene_ranges$gene_name[match(rownames(pca_object$loadings), annotation_gene_ranges$gene_id)]
+duplicated_names <- new_names[new_names %in% new_names[duplicated(new_names)]]
+new_names[is.na(new_names) | new_names %in% duplicated_names] <- rownames(pca_object$loadings)[is.na(new_names) | new_names %in% duplicated_names ]
+
+rownames(pca_object$loadings) <- new_names
+
+
+pdf("02-01-differential-expression-profiling/plots/01-erap2-overexpression-pca_plot.pdf")
+  biplot(pca_object, showLoadings = FALSE,
+    # labSize = 3, 
+    pointSize = 3, 
+    # sizeLoadingsNames = 3,
+    colby = "ERAP",
+    legendPosition = "bottom",
+    hline = 0,
+    vline = 0)
+dev.off()
+
+```
+
+- Perform a loadings plot
+
+```{r fig.cap = "PCA loadings plot of DESeq2 samples differentially expressed genes", include = FALSE, message = FALSE, warning = FALSE}
+
+
+pdf(file.path(plot_dir, "02-loadings_plot.pdf"))
+  plotloadings(pca_object, 
+    labSize = 3,
+    rangeRetain = 0.05,
+    title = 'Loadings plot',
+    subtitle = 'PC1, PC2, PC3, PC4, PC5',
+    caption = 'Top 5% variables')
+dev.off()
+
+```
+
+
+
+### 5.0 Make volcano plot
+
+- Plot volcano plot
+
+```{r}
+
+
+all_de_objects_list <- readRDS(file.path(rdata_dir, "01-erap2-overexpression-differentially-expressed-objects.rds"))
+de_analysis_list <- all_de_objects_list$contrasts
+de_object <- all_de_objects_list$differential_object
+
+all_de_df_list <- lapply(names(de_analysis_list), function(x){
+    message(x)
+    a_de_object <- de_analysis_list[[x]]
+    filter <- !is.na(a_de_object$padj)
+    logfcs <- a_de_object$log2FoldChange[filter]
+
+    data.frame(contrasts = x, 
+        gene_ids = rownames(a_de_object)[filter],
+        logfc = logfcs,
+        pval = a_de_object$pvalue[filter],
+        padj = a_de_object$padj[filter])
+})
+all_de_df <- do.call(rbind, all_de_df_list)
+
+saveRDS(object = all_de_df, file = file.path(rdata_dir, "01-all-differentially-expressed-genes.RDS"))
+
+de_df_list <- lapply(names(de_analysis_list), function(x){
+    message(x)
+    a_de_object <- de_analysis_list[[x]]
+    filter <- a_de_object$padj < 0.05 & !is.na(a_de_object$padj)
+    logfcs <- a_de_object$log2FoldChange[filter]
+    # if(!is.na(contrast_ref_df$reference_names[contrast_ref_df$contrast_names == x])){
+    #     ref_name <- contrast_ref_df$reference_names[contrast_ref_df$contrast_names == x]
+    #     ref_lfcs <- de_analysis_list[[ref_name]]$log2FoldChange[filter]
+    #     logfcs <- ref_lfcs - a_de_object$log2FoldChange[filter]
+    # }
+    if(any(filter)){
+        return(data.frame(contrasts = x, 
+                gene_ids = rownames(a_de_object)[filter],
+                logfc = logfcs,
+                pval = a_de_object$pvalue[filter],
+                padj = a_de_object$padj[filter]))
+    }
+    return(NULL)
+})
+de_df <- do.call(rbind, de_df_list)
+
+de_df$gene_name <- annotation_gene_ranges$gene_name[match(de_df$gene_ids, annotation_gene_ranges$gene_id)]
+all_de_df$gene_name <- annotation_gene_ranges$gene_name[match(all_de_df$gene_ids, annotation_gene_ranges$gene_id)]
+all_de_df <- all_de_df[!is.na(all_de_df$gene_name),]
+
+# intersecting_genes_als_vs_ctrl <- intersect(de_df$gene_name[de_df$contrast == "als_vs_ctrl_in_ctrl_cells"], de_df$gene_name[de_df$contrast == "effect_of_erap2_kd_in_als_vs_ctrl"])
+# intersecting_genes_als_vs_ctrl <- intersecting_genes_als_vs_ctrl[!is.na(intersecting_genes_als_vs_ctrl)]
+
+saveRDS(object = de_df, file = file.path(rdata_dir, "01-significantly-differentially-expressed-genes-padj-less-than-0.05.RDS"))
+
+write.csv(x = de_df, file = file.path(output_dir, "01-significantly-differentially-expressed-genes-padj-less-than-0.05.csv"),
+    row.names = F, quote = F)
+
+
+# source("src/plot_functions.R")
+
+# require("ggplot2")
+# require("RColorBrewer")
+
+# lapply(unique(all_de_df$contrasts), function(x){
+#     make_volcano_plot(plot_df = all_de_df[all_de_df$contrasts == x & !is.na(all_de_df$logfc),], 
+#         logfc_threshold = 5, highlight_genes = intersecting_genes_als_vs_ctrl, 
+#         logfc_col = "logfc", gradient_pal = "RdYlBu", pval_col = "pval",
+#         plot_pvalue_threshold = 0.05, plot_logfc_threshold = NA,
+#         filename = file.path("02-01-differential-expression-profiling/plots/", paste(x, ".pdf", sep = "")), 
+#         plot_width = 7, plot_height = 7)
+# })
+
+```
+
+- Select genes affected by ERAP2 overexpression 
+
+
+```{r}
+
+de_df$direction <- ifelse(de_df$logfc < 0, "down", "up")
+de_df$temp_id <- paste(de_df$gene_id, de_df$direction)
+
+gene_split <- split(de_df$temp_id, de_df$contrasts)
+erap2_affected_genes <- setdiff(gene_split[["erap2_vs_untx"]], gene_split[["ssgfp_overexpression"]])
+
+erap2_affected_de_df <- de_df[de_df$temp_id %in% erap2_affected_genes & de_df$contrasts == "erap2_vs_untx",]
+
+```
+
+- Perform gene set enrichment
+
+```{r}
+
+library("enrichR")
+dbs <- "GO_Biological_Process_2023"
+directions <- c("up", "down")
+
+contrast_split <- split(erap2_affected_de_df, erap2_affected_de_df$direction)
+enrichment_result_df <- do.call(rbind, lapply(contrast_split, function(temp_df){
+    db_df_list <- lapply(dbs, function(a_database){
+        current_genes <- temp_df$gene_name[!is.na(temp_df$gene_name)]
+        an_enrichment_df <- enrichr(current_genes,  a_database)[[1]]
+        if(nrow(an_enrichment_df) == 0){
+            return(NULL)
+        }
+        an_enrichment_df$direction <- unique(temp_df$direction)
+        an_enrichment_df$num_gene <- length(current_genes)
+        an_enrichment_df$db <- a_database
+        Sys.sleep(5)
+        return(an_enrichment_df)
+    })
+    db_df <- do.call(rbind, db_df_list)
+}))
+enrichment_result_df$gene_ratio <- vapply(enrichment_result_df$Overlap, function(x){
+    eval(parse(text = x))
+},1)
+
+write.csv(x = enrichment_result_df, file = file.path(output_dir, "05-ERAP2-overexpression-ERAP2-vs-Untx-remove-ssGFP-significantly-differentially-expressed-genes-padj-less-than-0.05.csv"),
+    row.names = F, quote = F)
+
+#significant_gene_set_enrichment <- enrichment_result_df[enrichment_result_df$P.value < 0.05 & enrichment_result_df$gene_ratio > 0.1,]
+
+```
+
+- Plot the top 10 terms
+
+
+```{r}
+
+
+selected_significant_gene_set_enrichment <- lapply(split(significant_gene_set_enrichment,  significant_gene_set_enrichment$direction), function(temp_df){
+    return_df <- temp_df[order(temp_df$P.value, decreasing = F),][1:10,]
+    return_df$term_only <- vapply(str_split(return_df$Term, pattern = " "), function(x){ paste(x[-length(x)], collapse = " ")}, "1")
+    return_df$term_only <- factor(return_df$term_only, levels = rev(return_df$term_only))
+    return(return_df)
+})
+
+```
+
+

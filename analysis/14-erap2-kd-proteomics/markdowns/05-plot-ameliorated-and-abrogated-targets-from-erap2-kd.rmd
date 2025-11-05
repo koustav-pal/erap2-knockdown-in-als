@@ -1,0 +1,313 @@
+---
+title:Gene set enrichment results from ERAP2 KD proteomics
+output:pdf_document
+---
+
+
+### Main questions
+
+We set out to understand the role of hypoxia in astrocytes.
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/nemo/lab/luscomben/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis` and include required packages
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/nemo/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis")
+require("stringr")
+require("DESeq2")
+require("PCAtools")
+require("rtracklayer")
+require("stringr")
+require("ggplot2")
+require("RColorBrewer")
+unloadNamespace("enrichR")
+library("enrichR")
+require("msigdbr")
+require("clusterProfiler")
+require("org.Hs.eg.db")
+# source("useful_functions/plot_utils.R")
+require("enrichplot")
+require("ggbeeswarm")
+
+
+```
+
+- Set paths
+
+```{r}
+
+analysis_path <- "14-erap2-kd-proteomics/"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+
+dir.create(save_dir)
+dir.create(plot_dir)
+dir.create(input_dir)
+dir.create(output_dir)
+
+
+```
+
+
+
+### Load annotation file
+
+- Load ensembl annotation gtf
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+require("rtracklayer")
+annotation_gtf <- "/nemo/lab/patanir/home/users/palk/Genomes/ENSEMBL_hg38/Homo_sapiens.GRCh38.104.chr_patch_hapl_scaff.gtf"
+annotation_ranges <- import.gff2(annotation_gtf)
+annotation_gene_ranges <- annotation_ranges[annotation_ranges$type == "gene"]
+
+```
+
+- Load significantly differentially enriched proteins
+
+```{r}
+
+# significant_events_df <- readRDS(file.path(save_dir, "02-03-significantly-affected-proteins.rds"))
+pairwise_group_sig_df <- readRDS(file.path(save_dir, "02-04-pairwise-grouped-significantly-affected-proteins.rds"))
+# annotated_gene_set_enrichment_df <- read.csv(file.path(output_dir, "03-annotated-gene-set-enrichment-with-go-bp.csv"))
+background_groups_df <- read.csv(file.path(output_dir, "04-background-protein-logfc-values.csv"))
+
+significantly_affected_proteins_df <- pairwise_group_sig_df[pairwise_group_sig_df$vcp_ctrl_vs_ctrl_ctrl_sig,]
+write.csv(significantly_affected_proteins_df, file = file.path(output_dir, "05-pairwise-grouped-significantly-affected-proteins.csv"))
+
+```
+
+- Plot the significantly ameliorated and abrogated proteins 
+
+```{r}
+
+
+
+model <- lm(data = background_groups_df,
+    formula = vcp_erap2_vs_vcp_ctrl_logfc ~ vcp_ctrl_vs_ctrl_ctrl_logfc)
+
+# Call:
+# lm(formula = vcp_erap2_vs_vcp_ctrl_logfc ~ vcp_ctrl_vs_ctrl_ctrl_logfc,
+#     data = background_groups_df)
+
+# Residuals:
+#     Min      1Q  Median      3Q     Max
+# -3.4866 -0.2163  0.0140  0.2514  2.2441
+
+# Coefficients:
+#                              Estimate Std. Error t value Pr(>|t|)
+# (Intercept)                  0.042637   0.006769   6.299 3.18e-10 ***
+# vcp_ctrl_vs_ctrl_ctrl_logfc -0.403447   0.006060 -66.574  < 2e-16 ***
+# ---
+# Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+# Residual standard error: 0.5176 on 6876 degrees of freedom
+# Multiple R-squared:  0.3919,    Adjusted R-squared:  0.3919
+# F-statistic:  4432 on 1 and 6876 DF,  p-value: < 2.2e-16
+
+Colours <- c("down->up" = "#FB3640", "up->down" = "#247BA0",
+    "down->down" = "#72A3C0", "up->up" = "#E0777D")
+
+
+my_theme <- theme(
+    legend.position = "bottom",
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "azure3",
+    linetype = "dashed",
+    size = 0.2))
+
+
+ThePlot <- ggplot(background_groups_df[!(background_groups_df$protein_name %in% significantly_affected_proteins_df$protein_name),], aes(x = vcp_ctrl_vs_ctrl_ctrl_logfc, y = vcp_erap2_vs_vcp_ctrl_logfc))
+ThePlot <- ThePlot + geom_hline(yintercept = 0, linetype = "dashed")
+ThePlot <- ThePlot + geom_vline(xintercept = 0, linetype = "dashed")
+ThePlot <- ThePlot + geom_point(colour = "azure3", alpha = 0.4)
+ThePlot <- ThePlot + geom_smooth(data = background_groups_df, method = "lm", formula = y ~ x, lty = "dashed", colour = "#000000")
+ThePlot <- ThePlot + geom_point(data = significantly_affected_proteins_df, 
+    aes(x = vcp_ctrl_vs_ctrl_ctrl_logfc, y = vcp_erap2_vs_vcp_ctrl_logfc, colour = direction_group))
+# ThePlot <- ThePlot + geom_boxplot(fill = "#E2E2E2", colour = "#000000", 
+#     width = 0.1, lwd = 0.5, position = position_dodge(width = 0.9), outlier.shape = NA)
+ThePlot <- ThePlot + scale_x_continuous("VCP vs Control effect")
+ThePlot <- ThePlot + scale_y_continuous("Effect of ERAP2 KD in VCP")
+ThePlot <- ThePlot + scale_colour_manual("direction groups", values = Colours)
+ThePlot <- ThePlot + theme_bw()
+ThePlot <- ThePlot + ggtitle("VCP vs Control effect versus ERAP2 KD in VCP")
+# ThePlot <- ThePlot + facet_grid(. ~ sig_group, scales = "free")
+ThePlot <- ThePlot + my_theme
+ggsave(width = 10, height = 10, file = file.path(plot_dir, "03-05-plot-vcp-vs-control-versus-effect-of-erap2-kd-in-vcp.pdf"), ThePlot)
+
+```
+
+### 5.0 Perform gene set enrichment
+
+- Perform gene set enrichment of proteins using `enrichr`
+
+```{r}
+
+protein_split <- split(significantly_affected_proteins_df, significantly_affected_proteins_df$direction_group)
+
+num_genes <- vapply(protein_split, nrow, 1)
+# down->down   down->up   up->down     up->up
+#        340        735         61         18
+num_genes / sum(num_genes)
+
+
+
+dbs <- "GO_Biological_Process_2023"
+groups <- names(protein_split)
+kd_geneset_enrichment_df <- do.call(rbind, lapply(groups, function(a_group){
+    a_temp_df <- protein_split[[a_group]]    
+    db_df_list <- lapply(dbs, function(a_database){
+        message(paste(a_database, a_group))
+        # current_fcs <- a_temp_df$logfc[a_temp_df$direction == a_direction]
+        current_genes <- a_temp_df$protein_name
+        an_enrichment_df <- enrichr(current_genes,  a_database)[[1]]
+        if(nrow(an_enrichment_df) == 0){
+            return(NULL)
+        }
+        an_enrichment_df$direction_group <- a_group
+        an_enrichment_df$num_gene <- length(current_genes)
+        an_enrichment_df$db <- a_database
+        Sys.sleep(5)
+        return(an_enrichment_df)
+    })
+    db_df <- do.call(rbind, db_df_list)
+    return(db_df)
+}))
+
+kd_geneset_enrichment_df$gene_ratio <- vapply(kd_geneset_enrichment_df$Overlap, function(x){
+    eval(parse(text = x))
+},1)
+
+
+# annotated_gene_set_enrichment_df <- read.csv(file.path(output_dir, "04-annotated-pairwise-groups-gene-set-enrichment-with-go-bp.csv"))
+significant_gene_set_enrichment <- kd_geneset_enrichment_df[kd_geneset_enrichment_df$P.value < 0.05 &
+    (kd_geneset_enrichment_df$gene_ratio > 0.1),]
+significant_gene_set_enrichment$Group <- annotated_gene_set_enrichment_df$Group[match(significant_gene_set_enrichment$Term, annotated_gene_set_enrichment_df$Term)]
+
+
+significant_gene_set_enrichment$ids <- vapply(str_extract_all(string = significant_gene_set_enrichment$Term, pattern = "(?<=\\()(.*?)(?=\\))"), function(x){x[length(x)]},"1")
+write.csv(significant_gene_set_enrichment, file = file.path(output_dir, "04-pairwise-groups-gene-set-enrichment-with-go-bp.csv"))
+# Perform enrichment smplify
+
+
+
+```
+
+- We annotated these terms into higher groups outside R for ease of human readability and understanding. Plot the term enrichments. 
+
+```{r}  
+
+annotated_gene_set_enrichment_df <- read.csv(file.path(output_dir, "04-annotated-pairwise-groups-gene-set-enrichment-with-go-bp.csv"))
+
+Colours <- c("down->up" = "#FB3640", "up->down" = "#247BA0",
+    "down->down" = "#72A3C0", "up->up" = "#E0777D")
+
+
+down_up_terms_df <- annotated_gene_set_enrichment_df[annotated_gene_set_enrichment_df$direction_group == "down->up",]
+
+median_gene_ratio <- vapply(split(down_up_terms_df$gene_ratio, down_up_terms_df$Group), length, 1)
+down_up_terms_df$Group <- factor(down_up_terms_df$Group, 
+    levels = names(median_gene_ratio[order(median_gene_ratio, decreasing = F)]))
+keep_levels <- levels(down_up_terms_df$Group)
+keep_levels <- keep_levels[keep_levels != "Other Processes"]
+
+
+ThePlot_1 <- ggplot(down_up_terms_df[down_up_terms_df$Group %in% rev(keep_levels)[1:10],], 
+    aes(x = -log10(P.value), y = Group))
+# ThePlot <- ThePlot + geom_boxplot(aes(fill = direction), colour = "#000000", 
+#     width = 0.5, lwd = 0.5)
+ThePlot_1 <- ThePlot_1 + geom_quasirandom(aes(fill = direction_group), colour = "#000000", 
+     position = position_jitter(), shape = 21)
+# ThePlot <- ThePlot + geom_hline(aes(yintercept = 1), colour = "#000000", lty = "dashed")
+ThePlot_1 <- ThePlot_1 + scale_x_continuous("-log10 pvalue")
+ThePlot_1 <- ThePlot_1 + scale_y_discrete("Downregulated -> upregulated terms from GO:BP")
+ThePlot_1 <- ThePlot_1 + scale_fill_manual("direction", values = Colours)
+ThePlot_1 <- ThePlot_1 + theme_bw()
+ThePlot_1 <- ThePlot_1 + ggtitle("Down -> up proteins")
+ThePlot_1 <- ThePlot_1 + my_theme
+
+
+
+up_down_terms_df <- annotated_gene_set_enrichment_df[annotated_gene_set_enrichment_df$direction_group == "up->down",]
+
+median_gene_ratio <- vapply(split(up_down_terms_df$gene_ratio, up_down_terms_df$Group), length, 1)
+up_down_terms_df$Group <- factor(up_down_terms_df$Group, 
+    levels = names(median_gene_ratio[order(median_gene_ratio, decreasing = F)]))
+keep_levels <- levels(up_down_terms_df$Group)
+keep_levels <- keep_levels[keep_levels != "Other Processes"]
+
+ThePlot_2 <- ggplot(up_down_terms_df[up_down_terms_df$Group %in% rev(keep_levels)[1:10],], aes(x = -log10(P.value), y = Group))
+# ThePlot <- ThePlot + geom_boxplot(aes(fill = direction), colour = "#000000", 
+#     width = 0.5, lwd = 0.5)
+ThePlot_2 <- ThePlot_2 + geom_quasirandom(aes(fill = direction_group), colour = "#000000", shape = 21)
+# ThePlot <- ThePlot + geom_hline(aes(yintercept = 1), colour = "#000000", lty = "dashed")
+ThePlot_2 <- ThePlot_2 + scale_x_continuous("-log10 pvalue")
+ThePlot_2 <- ThePlot_2 + scale_y_discrete("Upregulated -> downregulated terms from GO:BP")
+ThePlot_2 <- ThePlot_2 + scale_fill_manual("direction", values = Colours)
+ThePlot_2 <- ThePlot_2 + theme_bw()
+ThePlot_2 <- ThePlot_2 + ggtitle("Up -> down proteins")
+ThePlot_2 <- ThePlot_2 + my_theme
+
+
+
+down_down_terms_df <- annotated_gene_set_enrichment_df[annotated_gene_set_enrichment_df$direction_group == "down->down",]
+
+median_gene_ratio <- vapply(split(down_down_terms_df$gene_ratio, down_down_terms_df$Group), length, 1)
+down_down_terms_df$Group <- factor(down_down_terms_df$Group, 
+    levels = names(median_gene_ratio[order(median_gene_ratio, decreasing = F)]))
+keep_levels <- levels(down_down_terms_df$Group)
+keep_levels <- keep_levels[keep_levels != "Other Processes"]
+
+ThePlot_3 <- ggplot(down_down_terms_df[down_down_terms_df$Group %in% rev(keep_levels)[1:10],], aes(x = -log10(P.value), y = Group))
+# ThePlot <- ThePlot + geom_boxplot(aes(fill = direction), colour = "#000000", 
+#     width = 0.5, lwd = 0.5)
+ThePlot_3 <- ThePlot_3 + geom_quasirandom(aes(fill = direction_group), colour = "#000000", shape = 21)
+# ThePlot <- ThePlot + geom_hline(aes(yintercept = 1), colour = "#000000", lty = "dashed")
+ThePlot_3 <- ThePlot_3 + scale_x_continuous("-log10 pvalue")
+ThePlot_3 <- ThePlot_3 + scale_y_discrete("Downregulated -> downregulated terms from GO:BP")
+ThePlot_3 <- ThePlot_3 + scale_fill_manual("direction", values = Colours)
+ThePlot_3 <- ThePlot_3 + theme_bw()
+ThePlot_3 <- ThePlot_3 + ggtitle("Down -> down proteins")
+ThePlot_3 <- ThePlot_3 + my_theme
+
+
+up_up_terms_df <- annotated_gene_set_enrichment_df[annotated_gene_set_enrichment_df$direction_group == "up->up",]
+
+median_gene_ratio <- vapply(split(up_up_terms_df$gene_ratio, up_up_terms_df$Group), length, 1)
+up_up_terms_df$Group <- factor(up_up_terms_df$Group, 
+    levels = names(median_gene_ratio[order(median_gene_ratio, decreasing = F)]))
+keep_levels <- levels(up_up_terms_df$Group)
+keep_levels <- keep_levels[keep_levels != "Other Processes"]
+
+ThePlot_4 <- ggplot(up_up_terms_df[up_up_terms_df$Group %in% rev(keep_levels)[1:10],], aes(x = -log10(P.value), y = Group))
+# ThePlot <- ThePlot + geom_boxplot(aes(fill = direction), colour = "#000000", 
+#     width = 0.5, lwd = 0.5)
+ThePlot_4 <- ThePlot_4 + geom_quasirandom(aes(fill = direction_group), colour = "#000000", shape = 21)
+# ThePlot <- ThePlot + geom_hline(aes(yintercept = 1), colour = "#000000", lty = "dashed")
+ThePlot_4 <- ThePlot_4 + scale_x_continuous("-log10 pvalue")
+ThePlot_4 <- ThePlot_4 + scale_y_discrete("Upregulated -> upregulated terms from GO:BP")
+ThePlot_4 <- ThePlot_4 + scale_fill_manual("direction", values = Colours)
+ThePlot_4 <- ThePlot_4 + theme_bw()
+ThePlot_4 <- ThePlot_4 + ggtitle("Up -> up proteins")
+ThePlot_4 <- ThePlot_4 + my_theme
+
+
+require("patchwork")
+main_plot_1 <- ThePlot_1 | ThePlot_4
+main_plot_2 <- ThePlot_3 | ThePlot_2
+main_plot <- main_plot_1 / main_plot_2
+
+ggsave(width = 12, height = 12, file = file.path(plot_dir, "03-05-plot-gene-set-enrichment-using-gobp-for-ameliorated-and-abrogated-proteins.pdf"), main_plot)
+
+```

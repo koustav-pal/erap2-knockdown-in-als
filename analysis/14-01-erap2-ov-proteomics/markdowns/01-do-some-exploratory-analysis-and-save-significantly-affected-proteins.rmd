@@ -1,0 +1,446 @@
+---
+title:Gene set enrichment results from ERAP2 KD proteomics
+output:pdf_document
+---
+
+
+### Main questions
+
+We want to perform gene set enrichment of ERAP2 KD proteomics data.
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/export2/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis/` and include required packages
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/export2/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis/")
+require("stringr")
+require("DESeq2")
+require("PCAtools")
+require("rtracklayer")
+require("stringr")
+require("ggvenn")
+require("cowplot")
+unloadNamespace("enrichR")
+library("enrichR")
+require("msigdbr")
+require("clusterProfiler")
+library("biomaRt")
+require("org.Hs.eg.db")
+# source("useful_functions/plot_utils.R")
+require("enrichplot")
+require("GOSemSim")
+require("httr")
+require("jsonlite")
+require("fgsea")
+
+```
+
+- Set paths
+
+```{r}
+
+analysis_path <- "14-01-erap2-ov-proteomics"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+
+dir.create(save_dir)
+dir.create(plot_dir)
+dir.create(input_dir)
+dir.create(output_dir)
+
+```
+
+
+### Load annotation file
+
+- Load ensembl annotation gtf
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+require("rtracklayer")
+annotation_gtf <- "/export2/home/koustav/Genomes/ENSEMBL_hg38/Homo_sapiens.GRCh38.104.chr_patch_hapl_scaff.gtf"
+annotation_ranges <- import.gff2(annotation_gtf)
+annotation_gene_ranges <- annotation_ranges[annotation_ranges$type == "gene"]
+
+```
+
+- Load ERAP2 KD proteomics
+
+```{r}
+
+differential_protein_enrichment_list <- readRDS(file.path(save_dir, "02-01-erap2-OV-rots-differential-enrichment-analysis-results.rds"))
+erap2_ov_df <- read.csv(file.path(input_dir, "ERAP2_overexpression_proteomics.csv"))
+unimputed_effect_df <- differential_protein_enrichment_list$unimputed_data
+biomart_info_list <- readRDS(file.path(save_dir, "00-01-erap2-ov-biomart-metadata.rds"))
+
+gene_name_indexes <- vapply(unimputed_effect_df$protein_name, function(x){
+    if(x %in% erap2_ov_df[,"T..Protein.Names"]){
+        return(which(erap2_ov_df[,"T..Protein.Names"] == x))
+    }else{
+        return(which(grepl(x = erap2_ov_df[,"T..Protein.Names"], pattern = x) & grepl(x = erap2_ov_df[,"T..Protein.Names"], pattern = ";")))
+    }
+},1)
+unimputed_effect_df$gene_names <- erap2_ov_df[gene_name_indexes,"T..Genes"]
+
+
+all_biomart_info_df <- biomart_info_list$biomart_info
+synonym_df <- biomart_info_list$synonyms
+
+unimputed_effect_df$gene_id <- vapply(str_split(unimputed_effect_df$gene_names, pattern = ";"), function(x){
+    # message(x)
+    current_ranges <- annotation_gene_ranges[annotation_gene_ranges$gene_name %in% x]
+    if(length(current_ranges) == 0){
+        current_df <- all_biomart_info_df[all_biomart_info_df$hgnc_symbol == x,]
+        if(nrow(current_df) == 0){
+            current_df <- all_biomart_info_df[all_biomart_info_df$hgnc_symbol %in% unique(synonym_df[synonym_df$external_synonym %in% x,"hgnc_symbol"]),]
+            if(nrow(current_df) == 0){
+                return("NA")
+            }
+        }
+        versions <- vapply(str_split(current_df$ensembl_gene_id_version, pattern = "\\."),function(x){
+            as.numeric(x[2])
+        },1)
+        return(current_df$ensembl_gene_id[which.max(versions)])
+    } else if(length(current_ranges) > 1){
+        return(current_ranges$gene_id[which.max(current_ranges$gene_version)])
+    }
+    return(current_ranges$gene_id)
+},"1")
+
+
+```
+
+- Fetch all gene names
+
+```{r}
+
+
+protein_accessions <- vapply(split(all_biomart_info_df$uniprotswissprot, all_biomart_info_df$ensembl_gene_id), function(x){
+    paste(unique(x[x != ""]), collapse = ";")
+},"1")
+gene_names <- vapply(split(all_biomart_info_df$hgnc_symbol, all_biomart_info_df$ensembl_gene_id), function(x){
+    paste(unique(x[x != ""]), collapse = ";")
+},"1")
+
+
+```
+
+- Fetch the set of significantly differentially enriched proteins
+
+```{r}
+
+select_differentially_enriched_proteins <- function(data_df, sig){
+    all_diff_proteins <- do.call(rbind, lapply(unique(data_df$comparison), function(x){
+        temp_df <- data_df[data_df$comparison == x,]
+        if(sig == "fdr"){
+            sig_data_df <- temp_df[temp_df[,sig] < 0.05,]
+        }else if (sig == "pvalue"){
+            sig_data_df <- temp_df[temp_df[,sig] > 0.3,]
+        }
+        rownames(sig_data_df) <- NULL
+        return(sig_data_df)
+    }))
+    return(all_diff_proteins)
+}
+
+sig_unimputed_effect_df <- select_differentially_enriched_proteins(unimputed_effect_df, sig = "pvalue")
+
+
+all_contrasts <- unique(unimputed_effect_df$comparison) 
+
+significant_events_df <- do.call(rbind, lapply(all_contrasts, function(x){
+    sig_event_df <- unimputed_effect_df[
+        unimputed_effect_df$comparison == x & 
+        unimputed_effect_df$pvalue < 0.05,]
+    sig_event_df$sig_group <- "unimputed"
+    return(sig_event_df)
+}))
+rownames(significant_events_df) <- NULL
+
+significant_events_df$direction[significant_events_df$logfc < 0] <- "down"
+significant_events_df$direction[significant_events_df$logfc > 0] <- "up"
+saveRDS(object = significant_events_df, file = file.path(save_dir, "02-03-erap2-ov-significantly-affected-proteins.rds"))
+
+significant_events_export_df <- significant_events_df[,c(1,10,2,13,3,4,5,9,11,12)]
+write.csv(significant_events_export_df, file = file.path(output_dir, "erap2-ov-significantly-differentially-enriched-proteins-with-rots.csv"))
+
+
+```
+
+- save background set of proteins 
+
+```{r}
+
+
+all_proteins <- unique(unimputed_effect_df$protein_name)
+split_de_results <- split(unimputed_effect_df, unimputed_effect_df$comparison)
+
+protein_effect_df <- do.call(rbind, lapply(all_proteins, function(x){
+    logfc_val <- vapply(split_de_results, function(temp_df){
+        temp_df[temp_df$protein_name == x,"logfc"]
+    },1)
+    pvalue_val <- vapply(split_de_results, function(temp_df){
+        temp_df[temp_df$protein_name == x,"pvalue"]
+    },1)
+
+
+    data.frame(protein_name = x, 
+        gene_id = unimputed_effect_df$gene_id[unimputed_effect_df$protein_name == x],
+        erap2_vs_scramble_logfc = logfc_val["ERAP2_vs_SSCFP"],
+        erap2_vs_scramble_pval = pvalue_val["ERAP2_vs_SSCFP"],
+        erap2_vs_scramble_sig = ifelse("ERAP2_vs_SSCFP" %in% significant_events_df$comparison[match(x, significant_events_df$protein_name)], T, F),
+        erap2_vs_untreated_logfc = logfc_val["ERAP2_vs_UN"],
+        erap2_vs_untreated_pval = pvalue_val["ERAP2_vs_UN"],
+        erap2_vs_untreated_sig = ifelse("ERAP2_vs_UN" %in% significant_events_df$comparison[match(x, significant_events_df$protein_name)], T, F),
+        scramble_vs_untreated_logfc = logfc_val["SSCFP_vs_UN"],
+        scramble_vs_untreated_pval = pvalue_val["SSCFP_vs_UN"],
+        scramble_vs_untreated_sig = ifelse("SSCFP_vs_UN" %in% significant_events_df$comparison[match(x, significant_events_df$protein_name)], T, F))
+}))
+rownames(protein_effect_df) <- NULL
+protein_effect_df$erap2_vs_scramble_sig[is.na(protein_effect_df$erap2_vs_scramble_sig)] <- F
+protein_effect_df$erap2_vs_untreated_sig[is.na(protein_effect_df$erap2_vs_untreated_sig)] <- F
+protein_effect_df$scramble_vs_untreated_sig[is.na(protein_effect_df$scramble_vs_untreated_sig)] <- F
+write.csv(x = protein_effect_df, file = file.path(output_dir, "04-erap2-ov-background-protein-logfc-values.csv"))
+
+
+```
+
+- Plot log fold change of significantly affected genes
+
+```{r}
+
+
+# plot_q_df <- as.data.frame(quantile(significant_events_df$logfc, c(0.1, 0.25, 0.5, 0.75, 0.9)))
+# plot_q_df$quantile <- rownames(plot_q_df)
+# colnames(plot_q_df) <- c("logfc", "quantile")
+
+# dens_dist <- density(significant_events_df$logfc)
+# plot_q_df$yaxis <- vapply(plot_q_df$logfc, function(x){
+#     dens_dist$y[max(which(round(dens_dist$x,2) == round(x,2)))]
+# },1)
+# plot_q_df$label <- paste(plot_q_df$quantile, round(2^(plot_q_df$logfc),2), sep = ":")
+
+# #           logfc quantile     yaxis    label
+# # 10% -0.36620188      10% 1.7882933 10%:0.78
+# # 25% -0.30733347      25% 3.7275212 25%:0.81
+# # 50% -0.25327538      50% 4.0196775 50%:0.84
+# # 75% -0.17844485      75% 2.5070673 75%:0.88
+# # 90% -0.06808893      90% 0.6248176 90%:0.95
+
+# ThePlot <- ggplot(significant_events_df, aes(x = logfc))
+# ThePlot <- ThePlot + geom_density(fill = "azure3", colour = "#000000")
+# ThePlot <- ThePlot + geom_vline(data = plot_q_df, aes(xintercept = logfc), colour = "#000000", lty = "dashed")
+# ThePlot <- ThePlot + geom_label(data = plot_q_df, aes(x = logfc, y = yaxis, label = label), colour = "#000000")
+# ThePlot <- ThePlot + scale_x_continuous("log2 fold change")
+# ThePlot <- ThePlot + scale_y_continuous("density")
+# ThePlot <- ThePlot + theme_bw()
+# ThePlot <- ThePlot + ggtitle("density distribution of log fold changes")
+# # ThePlot <- ThePlot + facet_grid(. ~ comparison, scales = "free")
+# ThePlot <- ThePlot + current_theme
+# ggsave(width = 7, height = 7, file = file.path(plot_dir, "02-05-plot-density-plot-of-log-foldchanges.pdf"), ThePlot)
+
+```
+
+
+- Plot frequency of differential expression
+
+```{r}
+
+frequency_df <- as.data.frame(table(significant_events_df$comparison, significant_events_df$direction))
+colnames(frequency_df) <- c("comparison", "direction", "frequency")
+frequency_df$comparison <- factor(frequency_df$comparison, levels = c("ERAP2_vs_SSCFP", "ERAP2_vs_UN", "SSCFP_vs_UN"))
+prop_df <- do.call(rbind, lapply(split(frequency_df, frequency_df$comparison), function(x){
+    x <- x[rev(order(x$direction)),]
+    x$prop <- x$frequency / sum(x$frequency)
+    x$lab_y <-  cumsum(x$prop) - (0.5 * x$prop)
+    return(x)
+}))
+
+```
+
+- Plot frequency plots
+
+```{r}
+
+require("ggplot2")
+
+my_theme <- theme(legend.position = "bottom",
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 8, hjust = 1, angle = 45),
+    axis.text.y = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "azure3",
+    linetype = "dashed", size = 0.2))
+
+Colours <- c("up" = "#D81E5B", "down" = "#3993DD")
+the_plot <- ggplot(prop_df, aes(x = comparison, y = prop))
+the_plot <- the_plot + geom_col(aes(fill = direction), colour = "#000000")
+the_plot <- the_plot + geom_text(data = prop_df, aes(x = comparison, y = lab_y, label = frequency), colour = "#000000")
+the_plot <- the_plot + scale_x_discrete("comparisons")
+the_plot <- the_plot + scale_y_continuous("log10 frequency of differential expression")
+the_plot <- the_plot + scale_fill_manual("lfc direction", values = Colours)
+the_plot <- the_plot + theme_bw()
+the_plot <- the_plot + my_theme
+ggsave(the_plot, file = file.path(plot_dir, "02-06-frequency-of-differential-protein-enrichment.pdf"), height = 9, width = 3)
+
+```
+
+
+### Plot volcano plots
+
+- Plot volcano without thresholding on log foldchange
+
+```{r}
+
+unimputed_effect_df$direction[unimputed_effect_df$logfc < 0 ] <- "down"
+unimputed_effect_df$direction[unimputed_effect_df$logfc > 0 ] <- "up"
+
+unimputed_effect_df$log_pvalue <- -log10(unimputed_effect_df$pvalue)
+
+significant_events_df$log_pvalue <- -log10(significant_events_df$pvalue)
+
+direction_colours <- c("down" = "#009FB7", "up" = "#FF6978")
+sig_colours <- c("imputed" = "#FAB2EA", "unimputed" = "#7E2E84", "both" = "#EE6C4D")
+
+
+current_theme <- theme(
+    legend.position = "bottom",
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "azure3",
+    linetype = "dashed",
+    size = 0.2))
+
+ThePlot <- ggplot(unimputed_effect_df[unimputed_effect_df$comparison %in% c("ERAP2_vs_SSCFP"),], 
+    aes(x = logfc, y = log_pvalue))
+ThePlot <- ThePlot + geom_point(fill = "azure3", colour = "#000000", shape = 21, alpha = 0.6)
+ThePlot <- ThePlot + geom_point(data = significant_events_df[significant_events_df$comparison %in% "ERAP2_vs_SSCFP",], 
+    aes(fill = direction), colour = "#000000", shape = 21)
+ThePlot <- ThePlot + geom_vline(xintercept = c(-0.5, 0, 0.5), colour = "#000000", lty = "dashed")
+ThePlot <- ThePlot + geom_hline(yintercept = -log10(0.05), colour = "#000000", lty = "dashed")
+ThePlot <- ThePlot + scale_x_continuous("log2 fold change")
+ThePlot <- ThePlot + scale_y_continuous("-log10(pvalue)")
+ThePlot <- ThePlot + scale_fill_manual("direction", values = direction_colours)
+ThePlot <- ThePlot + theme_bw()
+ThePlot <- ThePlot + ggtitle("volcano plot of comparisons")
+# ThePlot <- ThePlot + facet_grid(. ~ comparison, scales = "free")
+ThePlot <- ThePlot + current_theme
+ggsave(width = 10, height = 7, file = file.path(plot_dir, "02-07-plot-volcano-plot-of-comparisons.pdf"), ThePlot)
+
+
+```
+
+- Highlight spliceosomal components
+
+```{r}
+
+path_to_proteins <- "19-investigating-the-spliceosomal-complexes/input_files"
+all_complexes <- list.files(path_to_proteins)
+
+all_splicing_complexes <- lapply(all_complexes, function(x){
+    message(x)
+    read.table(file = file.path(path_to_proteins, x), header = T, sep = "\t")
+})
+
+complex_proteins <- unique(do.call(c, lapply(all_splicing_complexes, function(x){
+    all_proteins <- trimws(c(x[,2], do.call(c, str_split(x[,7], pattern = ","))))
+    return(all_proteins[all_proteins != ""])
+})))
+
+significant_events_df$group <- "none"
+significant_events_df$group[significant_events_df$gene_name %in% complex_proteins] <- "splicing"
+significant_events_df$group[significant_events_df$gene_name == "ERAP2"] <- "ERAP2"
+
+group_colours <- c("splicing" = "#F0A6CA", "ERAP2" = "#A5243D", "none" = "#F0E6EF")
+
+ThePlot <- ggplot(unimputed_effect_df[unimputed_effect_df$comparison %in% c("ERAP2_vs_SSCFP"),], 
+    aes(x = logfc, y = log_pvalue))
+ThePlot <- ThePlot + geom_point(fill = "azure3", colour = "#000000", shape = 21, alpha = 0.6)
+ThePlot <- ThePlot + geom_point(data = significant_events_df[significant_events_df$comparison %in% "ERAP2_vs_SSCFP" & significant_events_df$group %in% c("splicing", "ERAP2"),], 
+    aes(fill = group), colour = "#000000", shape = 21)
+ThePlot <- ThePlot + geom_vline(xintercept = c(-0.5, 0, 0.5), colour = "#000000", lty = "dashed")
+ThePlot <- ThePlot + geom_hline(yintercept = -log10(0.05), colour = "#000000", lty = "dashed")
+ThePlot <- ThePlot + scale_x_continuous("log2 fold change")
+ThePlot <- ThePlot + scale_y_continuous("-log10(pvalue)")
+ThePlot <- ThePlot + scale_fill_manual("groups", values = group_colours)
+ThePlot <- ThePlot + theme_bw()
+ThePlot <- ThePlot + ggtitle("volcano plot of comparisons")
+# ThePlot <- ThePlot + facet_grid(. ~ comparison, scales = "free")
+ThePlot <- ThePlot + current_theme
+ggsave(width = 10, height = 7, file = file.path(plot_dir, "02-08-plot-volcano-plot-of-comparisons.pdf"), ThePlot)
+
+
+```
+
+- Perform GSEA for splicing components
+
+```{r}
+
+require("msigdbr")
+require("fgsea")
+require("parallel")
+
+go_mf_gene_sets = msigdbr(species = "human", category = "C5", subcategory = "GO:MF")
+msigdbr_list = split(x = go_mf_gene_sets$gene_symbol, f = go_mf_gene_sets$gs_name)
+
+
+complex_list = lapply(all_splicing_complexes, function(x){
+    x[,2]
+})
+names(complex_list) <- all_complexes
+all_splicing_proteins <- unique(do.call(c, complex_list))
+
+pathway_similarity <- vapply(msigdbr_list, function(x){
+    length(intersect(x, all_splicing_proteins)) / length(union(x, all_splicing_proteins))
+},1)
+
+modified_msigdbr_list <- msigdbr_list[pathway_similarity < 0.1]
+modified_msigdbr_list <- c(modified_msigdbr_list, complex_list)
+
+
+
+all_de_df_split <- split(all_de_df, all_de_df$contrasts)
+
+erap2_vs_scramble <- unimputed_effect_df[unimputed_effect_df$comparison %in% "ERAP2_vs_SSCFP",]
+
+erap2_vs_scramble <- erap2_vs_scramble[order(erap2_vs_scramble$logfc, decreasing = T),]
+a_vector <- erap2_vs_scramble$logfc
+names(a_vector) <- erap2_vs_scramble$gene_names
+# rank_vector <- 
+gsea_results_df <- fgsea(modified_msigdbr_list, a_vector, maxSize = 200)
+
+
+significant_gsea_df_list <- gsea_results_df[gsea_results_df$pval < 0.05 & !is.na(gsea_results_df$log2err) & gsea_results_df$pathway %in% names(complex_list),]
+
+
+all_significant_reactome_gsea_df <- do.call(rbind, lapply(names(significant_reactome_gsea_df_list), function(x){
+    temp_df <- as.data.frame(significant_reactome_gsea_df_list[[x]])
+    temp_df$contrast <- x
+    return(temp_df)
+}))
+
+pdf(file = file.path(plot_dir, "erap2_ov_NES_plots.pdf"))
+plotEnrichment(modified_msigdbr_list[["complex_B_activator.txt"]], a_vector)
+plotEnrichment(modified_msigdbr_list[["major_spliceosome.txt"]], a_vector)
+dev.off()
+
+saveRDS(object = all_significant_reactome_gsea_df, file = file.path(rdata_dir, "03_erap2_overexpression_reactome_GSEA_pval_0.05.rds"))
+
+
+
+
+```
+

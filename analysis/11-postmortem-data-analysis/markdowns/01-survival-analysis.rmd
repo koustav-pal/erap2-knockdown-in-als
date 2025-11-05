@@ -1,0 +1,334 @@
+---
+title:Microsatellite summary analysis
+output:pdf_document
+---
+
+
+### Main questions
+
+Investigate the survival probability of patients using ERAP2 expression
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/nemo/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis/11-postmortem-data-analysis` and include required packages 
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/nemo/lab/patanir/home/users/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis/")
+require("HiCBricks")
+require("GenomicRanges")
+require("stringr")
+# require("Biostrings")
+# require("rtracklayer")
+# require("GenomeInfoDb")
+# require("GenomicFeatures")
+require("ggplot2")
+library(rlang)
+library(riskRegression)
+library(survival)
+library(pammtools)
+library(gganimate)
+library(transformr)
+library(plotly)
+library(reshape2)
+library(knitr)
+library(rmarkdown)
+
+require("contsurvplot")
+require("RColorBrewer")
+
+```
+
+### 2.0 Include experiment matrix
+
+- Let's first import the counts.
+
+```{r include = FALSE, message = FALSE, warning = FALSE}
+
+analysis_path <- "11-postmortem-data-analysis"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+
+dir.create(save_dir, recursive = T)
+dir.create(plot_dir, recursive = T)
+dir.create(input_dir, recursive = T)
+dir.create(output_dir, recursive = T)
+
+```
+
+### 3.0 Imports
+
+- Load penetrance data
+
+```{r}
+
+patient_count_df <- readRDS(file.path(save_dir, "02-summarised-counts-for-patients.rds"))
+
+
+```
+
+### Analysis
+
+- Prepare data for brain and spinal cord age at death
+
+
+```{r}
+
+patient_count_df$type <- factor(patient_count_df$type, levels = c("control", "c9orf72-ALS", "other_mutation-fALS", "sporadic"))
+patient_count_df$type_group <- as.character(patient_count_df$type)
+patient_count_df$type_group[patient_count_df$type %in% c("other_mutation-fALS", "sporadic")] <- "sporadic+other_fALS"
+patient_count_df$tissue_group <- "spinal_cord"
+patient_count_df$tissue_group[patient_count_df$tissue %in% c("Cortex", "Cortex_Motor", "Cerebellum")] <- "brain"
+
+patient_surv_df <- do.call(rbind, lapply(split(patient_count_df, paste(patient_count_df$subject_id, patient_count_df$tissue_group)), function(temp_df){
+    # message(unique(temp_df$subject_id))
+    data.frame(subject_id = unique(temp_df$subject_id),
+        tissue_group = unique(temp_df$tissue_group),
+        # tissue = unique(temp_df$tissue),
+        age_at_onset = unique(temp_df$age_at_symptom_onset),
+        age_at_death = unique(temp_df$age_at_death),
+        disease_duration_in_months = unique(temp_df$disease_duration_in_months),
+        sex_genotype = unique(temp_df$sex_genotype),
+        mnd_with_ftd = unique(temp_df$mnd_with_ftd),
+        condition = unique(temp_df$condition),
+        mnd_with_dementia = unique(temp_df$mnd_with_dementia),
+        type_group = unique(temp_df$type_group),
+        erap2_expression = mean(temp_df$expr))
+}))
+
+patient_surv_df$age_at_death[patient_surv_df$age_at_death == "90 or Older"] <- "90"
+patient_surv_df$age_at_death <- as.numeric(patient_surv_df$age_at_death)
+patient_surv_df$age_at_onset <- as.numeric(patient_surv_df$age_at_onset)
+patient_surv_df$disease_duration <- as.numeric(patient_surv_df$disease_duration_in_months)
+
+
+unique(patient_surv_df[,c("subject_id", "type_group")])$type_group %>% table
+
+
+
+```
+
+- Perform modelling of the age of onset survival function using rci liability
+
+```{r}
+
+als_surv_df <- patient_surv_df
+als_surv_df$sex_genotype <- factor(als_surv_df$sex_genotype, levels = c("XX", "XY"))
+als_surv_df$status <- 0
+als_surv_df$status[als_surv_df$condition %in% c("als", "als+ftd", "ftd")] <- 1
+
+onset_vs_liability_model_output <- lapply(unique(als_surv_df$tissue_group), function(x){
+    model <- coxph(Surv(age_at_death, status) ~ sex_genotype + erap2_expression, 
+        data=als_surv_df[als_surv_df$tissue_group == x,], x=TRUE)
+    model
+})
+names(onset_vs_liability_model_output) <- unique(als_surv_df$tissue)
+
+lapply(onset_vs_liability_model_output, function(x){
+    summary(x)$coefficients["erap2_expression",]
+})
+# $Cortex
+# [1] 0.450597
+
+# $Cortex_Motor
+# [1] 0.951682
+
+# $Spinal_Cord_Cervical
+# [1] 0.4848951
+
+# $Spinal_Cord_Lumbar
+# [1] 0.2541188
+
+# $Cerebellum
+# [1] 0.1561018
+
+# $Spinal_Cord_Thoracic
+# [1] 0.6749545
+
+expression_vs_onset_plot_list <- lapply(names(onset_vs_liability_model_output), function(x){
+    current_model <- onset_vs_liability_model_output[[x]]
+    current_df <- als_surv_df[als_surv_df$tissue == x,]
+    als_quantiles <- quantile(current_df$erap2_expression, c(0.1, 0.5, 0.90))
+    the_plot <- plot_surv_lines(time = "age_at_death",
+                    status = "status",
+                    variable = "erap2_expression",
+                    data = current_df,
+                    model = current_model,
+                    cif = T,
+                    custom_color = RColorBrewer::brewer.pal(n = 5, name = "Reds"),
+                    horizon=als_quantiles) + ggtitle(x) + theme(legend.position = "none")
+    return(the_plot)
+})
+
+
+current_theme <- theme(
+    legend.position = "bottom",
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "azure3",
+    linetype = "dashed",
+    size = 0.2))
+
+expression_vs_onset_signal_plot <- lapply(names(onset_vs_liability_model_output), function(x){
+    current_df <- als_surv_df[als_surv_df$tissue == x,]
+    als_quantiles <- quantile(current_df$erap2_expression, c(0.1, 0.5, 0.90))
+
+    label_df <- data.frame(erap2_expression = als_quantiles, group = factor(names(als_quantiles), levels = c("10%", "50%", "90%")))
+
+    ThePlot <- ggplot(current_df, aes(x = erap2_expression))
+    ThePlot <- ThePlot + geom_density(fill = "#F6F4F3", colour = "#000000")
+    ThePlot <- ThePlot + geom_vline(data = label_df, aes(xintercept = erap2_expression, colour = group))
+    ThePlot <- ThePlot + scale_x_continuous("ERAP2 expression TPM")
+    ThePlot <- ThePlot + scale_y_continuous("density")
+    ThePlot <- ThePlot + scale_colour_manual("Condition colour", values = RColorBrewer::brewer.pal(n = 5, name = "Reds"))
+    # ThePlot <- ThePlot + scale_fill_manual("Condition colour", values = colours)
+    # ThePlot <- ThePlot + scale_fill_brewer("genotypes", palette = "Set1")
+    ThePlot <- ThePlot + theme_bw()
+    # ThePlot <- ThePlot + facet_grid(. ~ mnd_group)
+    ThePlot <- ThePlot + ggtitle(x)
+    ThePlot <- ThePlot + current_theme
+    return(ThePlot)
+})
+
+
+require("patchwork")
+the_plot_1 <- wrap_plots(expression_vs_onset_plot_list, ncol = 2)
+the_plot_2 <- wrap_plots(expression_vs_onset_signal_plot, ncol = 2)
+
+the_plot <- the_plot_1 / the_plot_2
+
+ggsave(width = 7, height = 7, file = file.path(plot_dir, paste("04-cumulative-incidence-erap2-expression-vs-age-at-death.pdf", sep = "-")), the_plot)
+
+
+```
+
+
+- Perform modelling of the survival function using RCI liability and disease duration
+
+
+```{r}
+
+patient_count_df$type <- factor(patient_count_df$type, levels = c("control", "c9orf72-ALS", "other_mutation-fALS", "sporadic"))
+patient_count_df$type_group <- as.character(patient_count_df$type)
+patient_count_df$type_group[patient_count_df$type %in% c("other_mutation-fALS", "sporadic")] <- "sporadic+other_fALS"
+patient_count_df$tissue_group <- "spinal_cord"
+patient_count_df$tissue_group[patient_count_df$tissue %in% c("Cortex", "Cortex_Motor", "Cerebellum")] <- "brain"
+
+patient_surv_df <- do.call(rbind, lapply(split(patient_count_df, paste(patient_count_df$subject_id, patient_count_df$tissue_group)), function(temp_df){
+    # message(unique(temp_df$subject_id))
+    data.frame(subject_id = unique(temp_df$subject_id),
+        tissue_group = unique(temp_df$tissue_group),
+        # tissue = unique(temp_df$tissue),
+        age_at_onset = unique(temp_df$age_at_symptom_onset),
+        age_at_death = unique(temp_df$age_at_death),
+        disease_duration_in_months = unique(temp_df$disease_duration_in_months),
+        sex_genotype = unique(temp_df$sex_genotype),
+        mnd_with_ftd = unique(temp_df$mnd_with_ftd),
+        condition = unique(temp_df$condition),
+        mnd_with_dementia = unique(temp_df$mnd_with_dementia),
+        type_group = unique(temp_df$type_group),
+        erap2_expression = mean(temp_df$expr))
+}))
+
+patient_surv_df$age_at_death[patient_surv_df$age_at_death == "90 or Older"] <- "90"
+patient_surv_df$age_at_death <- as.numeric(patient_surv_df$age_at_death)
+patient_surv_df$age_at_onset <- as.numeric(patient_surv_df$age_at_onset)
+patient_surv_df$disease_duration <- as.numeric(patient_surv_df$disease_duration_in_months)
+
+```
+
+- Perform modelling of the disease duration survival function using RCI liability
+
+```{r}
+
+als_surv_df <- patient_surv_df[!(patient_surv_df$condition %in% c("ctrl")),]
+als_surv_df$sex_genotype <- factor(als_surv_df$sex_genotype, levels = c("XX", "XY"))
+als_surv_df$status <- 0
+als_surv_df$status[als_surv_df$disease_duration <= 12 & !is.na(als_surv_df$disease_duration)] <- 1
+# whether patient survived beyond 36 months
+
+erap2_model_output <- lapply(unique(als_surv_df$tissue_group), function(x){
+    model <- coxph(Surv(disease_duration, status) ~ age_at_onset + sex_genotype + erap2_expression, 
+        data=als_surv_df[als_surv_df$tissue_group == x,], x=TRUE)
+    model
+})
+names(erap2_model_output) <- unique(als_surv_df$tissue_group)
+
+lapply(erap2_model_output, function(x){
+    summary(x)$coefficients["erap2_expression",]
+})
+
+lapply(erap2_model_output, function(x){
+    summary(x)
+})
+
+current_theme <- theme(
+    legend.position = "bottom",
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "azure3",
+    linetype = "dashed",
+    size = 0.2))
+
+# colours <- c("healthy" = "#F6F4F3", "als" = "#F87575", "als+ftd" = "#FFA9A3")
+
+expression_vs_disease_duration_signal_plot <- lapply(names(erap2_model_output), function(x){
+    current_df <- als_surv_df[als_surv_df$tissue_group == x,]
+    als_quantiles <- quantile(current_df$erap2_expression, c(0.1, 0.5, 0.90))
+
+    label_df <- data.frame(erap2_expression = als_quantiles, group = factor(names(als_quantiles), levels = c("10%", "50%", "90%")))
+
+    ThePlot <- ggplot(current_df, aes(x = erap2_expression))
+    ThePlot <- ThePlot + geom_density(fill = "#F6F4F3", colour = "#000000")
+    ThePlot <- ThePlot + geom_vline(data = label_df, aes(xintercept = erap2_expression, colour = group))
+    ThePlot <- ThePlot + scale_x_continuous("ERAP2 expression")
+    ThePlot <- ThePlot + scale_y_continuous("density")
+    ThePlot <- ThePlot + scale_colour_manual("Condition colour", values = RColorBrewer::brewer.pal(n = 5, name = "Reds"))
+    # ThePlot <- ThePlot + scale_fill_manual("Condition colour", values = colours)
+    # ThePlot <- ThePlot + scale_fill_brewer("genotypes", palette = "Set1")
+    ThePlot <- ThePlot + theme_bw()
+    # ThePlot <- ThePlot + facet_grid(. ~ mnd_group)
+    ThePlot <- ThePlot + ggtitle(x)
+    ThePlot <- ThePlot + current_theme
+    return(ThePlot)
+})
+
+expression_vs_disease_duration_survival_plot <- lapply(names(erap2_model_output), function(x){
+    current_model <- erap2_model_output[[x]]
+    current_df <- als_surv_df[als_surv_df$tissue_group == x,]
+    als_quantiles <- quantile(current_df$erap2_expression, c(0.1, 0.5, 0.90))
+    the_plot <- plot_surv_lines(time = "disease_duration",
+                    status = "status",
+                    variable = "erap2_expression",
+                    data = current_df,
+                    model = current_model,
+                    cif = F,
+                    custom_color = RColorBrewer::brewer.pal(n = 5, name = "Reds"),
+                    horizon=als_quantiles,
+                    max_t = 11) + ggtitle(x) + theme(legend.position = "none")
+})
+
+
+require("patchwork")
+the_plot_1 <- wrap_plots(expression_vs_disease_duration_survival_plot, ncol = 2)
+the_plot_2 <- wrap_plots(expression_vs_disease_duration_signal_plot, ncol = 2)
+
+the_plot <- the_plot_1 / the_plot_2
+
+ggsave(width = 7, height = 7, file = file.path(plot_dir, paste("05-survival-lines-erap2-expression-vs-disease-duration.pdf", sep = "-")), the_plot)
+
+
+```
