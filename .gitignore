@@ -4,11 +4,15 @@
 sync_across_locations.sh
 temp/
 tmp/
+slurm/
+plots/
 work/
 /synchronisation/
 /data_files/
 /@eaDir/
+/analysis/01-alignment/merged
 /analysis/01-erap2-overexpression-alignments/
+/analysis/02-00-differential-expression-profiling/
 /analysis/02-01-differential-expression-profiling/
 /analysis/02-02-comparing-de-against-merged/
 /analysis/02-04-merged-differential-expression-profiling/
