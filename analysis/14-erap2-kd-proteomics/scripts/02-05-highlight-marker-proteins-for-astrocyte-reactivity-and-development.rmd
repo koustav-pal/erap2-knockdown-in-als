@@ -1,0 +1,234 @@
+---
+title:Gene set enrichment results from ERAP2 KD proteomics
+output:pdf_document
+---
+
+
+### Main questions
+
+We set out to understand the role of hypoxia in astrocytes.
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/data/shared/lab_internal/012-Ben-Clarke-ERAP1-KD/analysis` and include required packages
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/data/shared/lab_internal/012-Ben-Clarke-ERAP1-KD/analysis")
+require("stringr")
+require("DESeq2")
+require("PCAtools")
+require("rtracklayer")
+require("stringr")
+# require("ggvenn")
+require("cowplot")
+require("ggplot2")
+require("ggrepel")
+
+```
+
+- Set paths
+
+```{r}
+
+analysis_path <- "14-erap2-kd-proteomics/"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+
+dir.create(save_dir)
+dir.create(plot_dir)
+dir.create(input_dir)
+dir.create(output_dir)
+
+```
+
+
+
+### Load annotation file
+
+- Load ensembl annotation gtf
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+require("rtracklayer")
+annotation_gtf <- "/data/shared/public_datasets/Genomes/ENSEMBL_hg38/Homo_sapiens.GRCh38.104.chr_patch_hapl_scaff.gtf"
+annotation_ranges <- import.gff2(annotation_gtf)
+annotation_gene_ranges <- annotation_ranges[annotation_ranges$type == "gene"]
+
+```
+
+- Load ERAP2 KD proteomics
+
+```{r}
+
+differential_protein_enrichment_list <- readRDS(file.path(save_dir, "02-02-rots-differential-enrichment-analysis-results.rds"))
+unimputed_effect_df <- differential_protein_enrichment_list$unimputed_data
+imputed_effect_df <- do.call(rbind, differential_protein_enrichment_list$minprob_default_imputed_data)
+
+```
+
+- The imputed and unimputed data have very considerable overlaps, we consider the union of both
+
+```{r}
+
+significant_events_df <- readRDS(file.path(save_dir, "02-03-significantly-affected-proteins.rds"))
+
+```
+
+### Plot volcano plots
+
+- Define astrocytic marker genes
+
+```{r}
+
+# astrocyte_marker_genes <- c("GFAP", "AQP4", "PLA2G7", "SLC39A12",
+# "MLC1", "DIO2", "SLC14A1", "ALDH1L1", "ALDOC", "TTPA",
+# "ACSBG1", "CHRDL1", "SLC4A4", "SLC1A2", "SLC25A18",
+# "SLC1A3", "F3", "PPP1R3G", "FZD2", "MERTK",
+# "EZR", "EVA1A", "GJB6", "HAPLN1", "RFX4",
+# "PAPSS2", "SLC15A2", "PPP1R3C", "TLR3", "ACOT11",
+# "ATP1A2", "BMPR1B", "PRODH", "GLI3", "TMEM47",
+# "SLC9A3R1", "CTH", "NTSR2", "SLC7A10", "VCAM1",
+# "FGFR3", "CCDC80", "ENTPD2", "CYBRD1", "KCNE5",
+# "FAM20A", "TNC", "TLCD1", "S1PR1", "CBS", 
+# "PBXIP1", "GRIN2C", "ADHFE1", "AGT", "GLDC",
+# "SLC7A2", "GJA1", "PDK4", "EGFR", "SOX9",
+# "CLDN10", "PLCD4", "ID4", "FMO1", "EMP2",
+# "LONRF3", "HTRA1", "MGST1", "THRSP")
+
+astrocyte_marker_genes <- c("SLC7A2", "MGST1", "NFIX", "VIM", "TNC",
+"FGFR3", "CYBRD1", "CCDC80", "EZR", "MLC1", "CHRDL1",
+"ACSBG1", "GLI3", "SLC9A3R1", "RFX4", "F3", "SOX9",
+"GFAP", "EDNRB", "BMPR1B", "EGFR", "TMEM47", "GJA1",
+"CBS", "S100B", "PBXIP1", "S1PR1", "AQP4", "ID4",
+"FZD2", "EMP2")
+
+reactivity_marker_genes <- c("LCN2", "STEAP4", "S1PR3", "TIMP1",
+"HSPB1", "CXCL10", "CD44", "OSMR", "CP", "VIM", "GFAP", "SERPINA3", 
+"ASPG", "C3", "HLA-A", "HLA-B", "HLA-C", "HLA-E", "HLA-F", "MICA",
+"H2-T23", "H2-D1", "GBP2", "AMIGO2", "SERPING1", "GGTA1P", "GGTA1",
+"FBLN5", "UGT1A1", "FKBP5", "PSMB8", "SRGN", "IIGP1", "S100A10",
+"EMP1", "CLCF1", "TGM1", "PTX3", "SPHK1", "CD109", "PTGS2", 
+"SLC10A6", "TM4SF1", "B3GNT5", "CD14")
+
+escartin_marker_genes <- c("GFAP", "NES", "SYNM", "VIM",
+"ALDOC", "FABP7", "MAOB", "TSPO", "CRYAB", "HSPB1",
+"C3", "CHI3L1", "LCN2", "SERPINA3", "THBS1", "THBS2",
+"MT2A", "MT1E", "NFATC4", "NFAT5", "NTRK2", "IL17R",
+"S100B", "SOX9", "STAT3", "IRAS1", "IRAS2", "SLC1A3",
+"SLC1A2", "KCNJ10")
+
+```
+
+- Plot volcano without thresholding on log foldchange
+
+```{r}
+
+imputed_effect_df$direction[imputed_effect_df$logfc < 0 ] <- "down"
+imputed_effect_df$direction[imputed_effect_df$logfc > 0 ] <- "up"
+
+imputed_effect_df$fdr[imputed_effect_df$fdr == 0] <- 0.001
+imputed_effect_df$log_fdr <- -log10(imputed_effect_df$fdr)
+imputed_effect_df$log_pvalue <- -log10(imputed_effect_df$pvalue)
+
+
+significant_events_df$fdr[significant_events_df$fdr == 0] <- 0.001
+significant_events_df$log_fdr <- -log10(significant_events_df$fdr)
+significant_events_df$log_pvalue <- -log10(significant_events_df$pvalue)
+
+direction_colours <- c("down" = "#009FB7", "up" = "#FF6978")
+sig_colours <- c("imputed" = "#FAB2EA", "unimputed" = "#7E2E84", "both" = "#EE6C4D")
+
+
+current_theme <- theme(
+    legend.position = "bottom",
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "azure3",
+    linetype = "dashed",
+    size = 0.2))
+
+
+unique(imputed_effect_df[
+    imputed_effect_df$pvalue < 0.05 & 
+    imputed_effect_df$protein_name %in% c(astrocyte_marker_genes, reactivity_marker_genes, escartin_marker_genes) & 
+    imputed_effect_df$comparison %in% c("VCP_ERAP2_vs_VCP_CTRL", "CTRL_ERAP2_vs_CTRL_CTRL"), "protein_name"])
+
+
+
+ThePlot <- ggplot(imputed_effect_df[imputed_effect_df$comparison %in% c("VCP_ERAP2_vs_VCP_CTRL", "CTRL_ERAP2_vs_CTRL_CTRL") & 
+    imputed_effect_df$protein_name %in% astrocyte_marker_genes,], 
+    aes(x = logfc, y = log_pvalue))
+ThePlot <- ThePlot + geom_point(fill = "#F6F3FE", colour = "#000000", shape = 21, alpha = 0.4)
+# ThePlot <- ThePlot + geom_point(data = significant_events_df[significant_events_df$comparison %in% c("VCP_CTRL_vs_CTRL_CTRL", "VCP_ERAP2_vs_CTRL_ERAP2"),], 
+#     aes(fill = sig_group), colour = "#000000", shape = 21)
+ThePlot <- ThePlot + geom_text_repel(data = imputed_effect_df[
+    imputed_effect_df$protein_name %in% astrocyte_marker_genes & 
+    imputed_effect_df$comparison %in% c("VCP_ERAP2_vs_VCP_CTRL", "CTRL_ERAP2_vs_CTRL_CTRL"),], 
+    aes(label = protein_name), box.padding = 0.8, point.padding = 0.3, max.overlaps = Inf, size = 2)
+ThePlot <- ThePlot + geom_vline(xintercept = 0, colour = "#000000", lty = "dashed")
+ThePlot <- ThePlot + geom_hline(yintercept = -log10(0.05), colour = "#000000", lty = "dashed")
+ThePlot <- ThePlot + scale_x_continuous("log2 fold change")
+ThePlot <- ThePlot + scale_y_continuous("-log10(pvalue)")
+# ThePlot <- ThePlot + scale_fill_manual("significance group", values = sig_colours)
+ThePlot <- ThePlot + theme_bw()
+ThePlot <- ThePlot + ggtitle("volcano plot of comparisons")
+ThePlot <- ThePlot + facet_grid(. ~ comparison, scales = "free")
+ThePlot <- ThePlot + current_theme
+ggsave(width = 10, height = 7, file = file.path(plot_dir, "100-01-genome-medicine-rebuttal-analysis-volcano-plot-of-comparisons-highlight-astrocyte-markers.pdf"), ThePlot)
+
+
+ThePlot <- ggplot(imputed_effect_df[imputed_effect_df$comparison %in% c("VCP_ERAP2_vs_VCP_CTRL", "CTRL_ERAP2_vs_CTRL_CTRL") & 
+    imputed_effect_df$protein_name %in% reactivity_marker_genes,], 
+    aes(x = logfc, y = log_pvalue))
+ThePlot <- ThePlot + geom_point(fill = "#F6F3FE", colour = "#000000", shape = 21, alpha = 0.4)
+# ThePlot <- ThePlot + geom_point(data = significant_events_df[significant_events_df$comparison %in% c("VCP_CTRL_vs_CTRL_CTRL", "VCP_ERAP2_vs_CTRL_ERAP2"),], 
+#     aes(fill = sig_group), colour = "#000000", shape = 21)
+ThePlot <- ThePlot + geom_text_repel(data = imputed_effect_df[
+    imputed_effect_df$protein_name %in% reactivity_marker_genes & 
+    imputed_effect_df$comparison %in% c("VCP_ERAP2_vs_VCP_CTRL", "CTRL_ERAP2_vs_CTRL_CTRL"),], 
+    aes(label = protein_name), box.padding = 0.8, point.padding = 0.3, max.overlaps = Inf, size = 2)
+ThePlot <- ThePlot + geom_vline(xintercept = 0, colour = "#000000", lty = "dashed")
+ThePlot <- ThePlot + geom_hline(yintercept = -log10(0.05), colour = "#000000", lty = "dashed")
+ThePlot <- ThePlot + scale_x_continuous("log2 fold change")
+ThePlot <- ThePlot + scale_y_continuous("-log10(pvalue)")
+# ThePlot <- ThePlot + scale_fill_manual("significance group", values = sig_colours)
+ThePlot <- ThePlot + theme_bw()
+ThePlot <- ThePlot + ggtitle("volcano plot of comparisons")
+ThePlot <- ThePlot + facet_grid(. ~ comparison, scales = "free")
+ThePlot <- ThePlot + current_theme
+ggsave(width = 10, height = 7, file = file.path(plot_dir, "100-02-genome-medicine-rebuttal-analysis-volcano-plot-of-comparisons-highlight-reactivity-markers.pdf"), ThePlot)
+
+
+ThePlot <- ggplot(imputed_effect_df[imputed_effect_df$comparison %in% c("VCP_ERAP2_vs_VCP_CTRL", "CTRL_ERAP2_vs_CTRL_CTRL") & 
+    imputed_effect_df$protein_name %in% escartin_marker_genes,], 
+    aes(x = logfc, y = log_pvalue))
+ThePlot <- ThePlot + geom_point(fill = "#F6F3FE", colour = "#000000", shape = 21, alpha = 0.4)
+# ThePlot <- ThePlot + geom_point(data = significant_events_df[significant_events_df$comparison %in% c("VCP_CTRL_vs_CTRL_CTRL", "VCP_ERAP2_vs_CTRL_ERAP2"),], 
+#     aes(fill = sig_group), colour = "#000000", shape = 21)
+ThePlot <- ThePlot + geom_text_repel(data = imputed_effect_df[
+    imputed_effect_df$protein_name %in% escartin_marker_genes & 
+    imputed_effect_df$comparison %in% c("VCP_ERAP2_vs_VCP_CTRL", "CTRL_ERAP2_vs_CTRL_CTRL"),], 
+    aes(label = protein_name), box.padding = 0.8, point.padding = 0.3, max.overlaps = Inf, size = 2)
+ThePlot <- ThePlot + geom_vline(xintercept = 0, colour = "#000000", lty = "dashed")
+ThePlot <- ThePlot + geom_hline(yintercept = -log10(0.05), colour = "#000000", lty = "dashed")
+ThePlot <- ThePlot + scale_x_continuous("log2 fold change")
+ThePlot <- ThePlot + scale_y_continuous("-log10(pvalue)")
+# ThePlot <- ThePlot + scale_fill_manual("significance group", values = sig_colours)
+ThePlot <- ThePlot + theme_bw()
+ThePlot <- ThePlot + ggtitle("volcano plot of comparisons")
+ThePlot <- ThePlot + facet_grid(. ~ comparison, scales = "free")
+ThePlot <- ThePlot + current_theme
+ggsave(width = 10, height = 7, file = file.path(plot_dir, "100-03-genome-medicine-rebuttal-analysis-volcano-plot-of-comparisons-highlight-escartin-markers.pdf"), ThePlot)
+
+
+
+```

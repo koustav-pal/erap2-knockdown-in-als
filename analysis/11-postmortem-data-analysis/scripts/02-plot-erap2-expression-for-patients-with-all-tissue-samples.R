@@ -1,4 +1,9 @@
-data_dir <- normalizePath("/nemo/lab/patanir/home/users/palk/")
+fetch_file_from_nas <- function(x, method){
+    tempfile <- tempfile()
+    system(paste(paste("rsync patanilab@10.246.164.99",x,sep = ":"), tempfile))
+    return(method(tempfile))
+}
+data_dir <- normalizePath("/export2/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis")
 project_dir <- file.path(data_dir, "Projects", "012-Ben-Clarke-ERAP1-KD")
 Sys.setenv(R_REMOTES_NO_ERRORS_FROM_WARNINGS = "true")
 # save_dir <- file.path(project_dir, "rdata_files")
@@ -12,7 +17,7 @@ temp_dir <- file.path(analysis_dir, "tmp")
 alsod_genes_df <- read.csv(file.path(project_dir, "data_files/alsod_genelist.csv"))
 annotation_gtf <- "/nemo/lab/patanir/home/users/palk/Genomes/ENSEMBL_hg38/Homo_sapiens.GRCh38.104.chr_patch_hapl_scaff.gtf"
 tmp_dir <- file.path(analysis_dir, "slurm")
-genic_count_list <- readRDS(file.path(analysis_save_dir, "01-gene-level-counts-of-postmortem-samples.rds"))
+genic_count_list <- fetch_file_from_nas("/var/services/homes/patanilab/2025-crick-user-folders/palk/Projects/012-Ben-Clarke-ERAP1-KD/analysis/11-postmortem-data-analysis/rdata_files/01-gene-level-counts-of-postmortem-samples.rds", method = readRDS)
 # ==========================================================================
 # Imports
 # ==========================================================================
@@ -41,7 +46,8 @@ tpm_matrix <- t(t(tpm_matrix) / (colSums(tpm_matrix) / 1e6))
 coldata_df <- genic_count_list$coldata
 coldata_df$expr <- tpm_matrix[annotation_gene_ranges$gene_id[annotation_gene_ranges$gene_name == "ERAP2" & !is.na(annotation_gene_ranges$gene_name)],
     coldata_df$column_id]
-
+# boo <- unique(coldata_df[coldata_df$condition %in% c("als", "als+ftd"),c("subject_id", "type")])
+# table(boo$type)
 
 coldata_df_split <- split(coldata_df, paste(coldata_df$subject_id, coldata_df$tissue))
 patient_plot_df <- do.call(rbind, lapply(coldata_df_split, function(temp_df){

@@ -1,0 +1,1431 @@
+---
+title:Microsatellite summary analysis
+output:pdf_document
+---
+
+
+### Main questions
+
+This document contains all of the data required for analysing the AnswerALS data.
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis/22-scrnaseq-data-analysis` and include required packages 
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis/")
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(rtracklayer)
+library(sctransform)
+library(glmGamPoi)
+
+```
+
+### 2.0 Include experiment matrix
+
+- Let's first import the counts.
+
+```{r include = FALSE, message = FALSE, warning = FALSE}
+
+analysis_path <- "22-scrnaseq-data-analysis"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+
+dir.create(save_dir, recursive = T)
+dir.create(plot_dir, recursive = T)
+dir.create(input_dir, recursive = T)
+dir.create(output_dir, recursive = T)
+
+```
+
+
+### 3.0 Analysis
+
+- Fetch the annotation
+
+```{r}
+
+annotation_gtf <- "/data/shared/public_datasets/Genomes/ENSEMBL_hg38/Homo_sapiens.GRCh38.104.chr_patch_hapl_scaff.gtf"
+annotation_ranges <- import.gff2(annotation_gtf)
+gene_ranges <- annotation_ranges[annotation_ranges$type == "gene"]
+
+```
+
+- Make a list of candidate cells
+
+```{r}
+
+annotated_cells <- readRDS(file.path(save_dir,  "01-saved-list-of-reference-annotated-cells.rds"))
+
+table(annotated_cells$predicted.cell_type)
+    #    Astrcytes      Endothelial  Ependymal Cells      Lymphocytes 
+    #        14455             1348              438             6404 
+    #     Meninges        Microglia          Neurons Oligodendrocytes 
+    #         1950            12129             1635            54293 
+    #          OPC        Pericytes          Schwann 
+    #         5009              594              577 
+
+```
+
+- Fix annotation inconsistency
+
+```{r}
+
+DefaultAssay(annotated_cells) <- "RNA"
+
+annotated_cells$predicted.cell_type <-
+    as.character(annotated_cells$predicted.cell_type)
+
+annotated_cells$predicted.cell_type[
+    annotated_cells$predicted.cell_type == "Astrcytes"
+] <- "Astrocytes"
+
+annotated_cells$predicted.cell_type <-
+    factor(annotated_cells$predicted.cell_type)
+
+Idents(annotated_cells) <- "seurat_clusters"
+
+```
+- Add labels for condition and patient ids
+
+```{r}
+
+annotated_cells$patient_id <- sub(
+    "^g?([0-9]+).*",
+    "\\1",
+    as.character(annotated_cells$sample)
+)
+
+annotated_cells$condition <- ifelse(
+    grepl(
+        "(^|[-_])ALS([-_]|$)",
+        annotated_cells$sample,
+        ignore.case = TRUE
+    ),
+    "ALS",
+    "control"
+)
+
+annotated_cells$condition <- factor(
+    annotated_cells$condition,
+    levels = c("control", "ALS")
+)
+
+table(unique(annotated_cells[[]][,c("patient_id", "condition")])$condition)
+# control     ALS 
+#       4       8 
+
+```
+
+- Plot frequency of cell types across conditions
+
+```{r}
+
+patient_cell_type_df <- reshape2::melt(table(annotated_cells[[]][,c("condition", "predicted.cell_type")]))
+colnames(patient_cell_type_df) <- c("condition", "cell_type", "frequency")
+patient_condition_df <- unique(annotated_cells[[]][,c("patient_id", "condition")])
+rownames(patient_condition_df) <- NULL
+condition_freq <- table(patient_condition_df$condition)
+patient_cell_type_df$per_patient_frequency <- patient_cell_type_df$frequency / condition_freq[patient_cell_type_df$condition]
+patient_cell_type_df <- patient_cell_type_df[
+    patient_cell_type_df$cell_type %in% 
+    c( "Neurons", "Astrocytes", "Oligodendrocytes", 
+    "Endothelial", "Lymphocytes", "OPC", "Microglia", 
+    "Meninges"),]
+
+require(RColorBrewer)
+require(viridis)
+require(ggplot2)
+require(ggokabeito)
+# cell_type_colours <- RColorBrewer::brewer.pal(n = 9, name = "Set1")
+# cell_type_colours <- viridis::mako(n = 9)
+# names(cell_type_colours) <- unique(patient_cell_type_df$cell_type)
+condition_colours <- c("control" = "#F0EFF4", "ALS" = "#BD1E1E")
+
+p_frequency <- ggplot(
+    patient_cell_type_df,
+    aes(
+        x = reorder(
+            cell_type,
+            frequency
+        ),
+        y = log10(per_patient_frequency)
+    )
+) +
+    geom_col(aes(fill = condition), color = "#000000", position = position_dodge(width = 0.9)) +
+    scale_fill_manual("cell type", values = condition_colours) + 
+    geom_hline(
+        yintercept = 0,
+        linetype = 2
+    ) +
+    coord_flip() +
+    labs(
+        x = NULL,
+        y = "log10 N of cells detected per patient",
+        title = "Frequency of cell annotations"
+    ) +
+    theme_classic()
+
+ggsave(
+    filename = file.path(
+        plot_dir,
+        "20-01-plot-frequency-of-predicted-cell-types.pdf"
+    ),
+    plot = p_frequency,
+    width = 10,
+    height = 5,
+    units = "in",
+    dpi = 300
+)
+
+```
+
+- Plot the unsupervised clusters
+
+```{r}
+
+require(ggplot2)
+
+# png(filename = file.path(plot_dir, "20-01-plot-unsupervised-clusters-from-seurat.png"), width = 15, height = 15, dpi = 300)
+a_plot <- DimPlot(
+    annotated_cells,
+    reduction = "umap",
+    group.by = "seurat_clusters",
+    label = TRUE,
+    repel = TRUE,
+    combine = TRUE,
+    raster = TRUE
+) + NoLegend()
+# dev.off()
+
+ggsave(
+    filename = file.path(
+        plot_dir,
+        "20-01-plot-unsupervised-clusters-from-seurat.png"
+    ),
+    plot = a_plot,
+    width = 15,
+    height = 15,
+    units = "in",
+    dpi = 300
+)
+
+```
+
+- Now colour by reference annotation
+
+```{r}
+
+a_plot <- DimPlot(
+    annotated_cells,
+    reduction = "umap",
+    group.by = "predicted.cell_type",
+    label = TRUE,
+    repel = TRUE,
+    raster = TRUE
+)
+
+ggsave(
+    filename = file.path(
+        plot_dir,
+        "20-02-plot-unsupervised-clusters-from-seurat-with-reference-annotation.png"
+    ),
+    plot = a_plot,
+    width = 15,
+    height = 15,
+    units = "in",
+    dpi = 300
+)
+
+```
+
+- Identify identity of each cluster 
+
+```{r}
+
+library(dplyr)
+
+cluster_composition <- annotated_cells[[]] |>
+    count(
+        seurat_clusters,
+        predicted.cell_type,
+        name = "n"
+    ) |>
+    group_by(seurat_clusters) |>
+    mutate(
+        total = sum(n),
+        proportion = n / total
+    ) |>
+    arrange(
+        as.numeric(as.character(seurat_clusters)),
+        desc(proportion)
+    ) |>
+    ungroup()
+
+cluster_composition
+
+cluster_top2 <- cluster_composition |>
+    group_by(seurat_clusters) |>
+    slice_max(
+        order_by = proportion,
+        n = 2,
+        with_ties = FALSE
+    ) |>
+    ungroup()
+
+# cluster_top2
+# # A tibble: 38 × 5
+#    seurat_clusters predicted.cell_type     n total proportion
+#    <fct>           <fct>               <int> <int>      <dbl>
+#  1 0               Oligodendrocytes    15474 15475  1.000    
+#  2 0               Endothelial             1 15475  0.0000646
+#  3 1               Microglia            9765 13606  0.718    
+#  4 1               Lymphocytes          3698 13606  0.272    
+#  5 2               Astrocytes          11771 13022  0.904    
+#  6 2               Oligodendrocytes     1212 13022  0.0931   
+#  7 3               Oligodendrocytes    12304 12304  1        
+#  8 4               Oligodendrocytes    10799 10799  1        
+#  9 5               Oligodendrocytes     7170  7180  0.999    
+# 10 5               Neurons                 4  7180  0.000557 
+
+```
+
+- Clean up annotation
+
+```{r}
+
+cluster_annotation <- cluster_composition |>
+    group_by(seurat_clusters) |>
+    slice_max(
+        order_by = proportion,
+        n = 1,
+        with_ties = FALSE
+    ) |>
+    ungroup() |>
+    select(
+        seurat_clusters,
+        cluster_cell_type = predicted.cell_type,
+        cluster_purity = proportion,
+        n,
+        total
+    )
+
+cluster_annotation
+
+cluster_to_celltype <- setNames(
+    cluster_annotation$cluster_cell_type,
+    cluster_annotation$seurat_clusters
+)
+
+annotated_cells$cluster_cell_type <- unname(
+    cluster_to_celltype[
+        as.character(annotated_cells$seurat_clusters)
+    ]
+)
+
+```
+
+- Make a new label
+
+```{r}
+
+annotated_cells$cluster_annotation <- paste0(
+    annotated_cells$cluster_cell_type,
+    "_",
+    annotated_cells$seurat_clusters
+)
+
+```
+
+- Plot new cleaned up clusters
+
+```{r}
+
+
+a_plot <- DimPlot(
+    annotated_cells,
+    reduction = "umap",
+    group.by = "cluster_cell_type",
+    cols = cell_type_colours,
+    label = TRUE,
+    repel = TRUE,
+    raster = TRUE
+) + NoLegend()
+
+ggsave(
+    filename = file.path(
+        plot_dir,
+        "20-03-plot-unsupervised-clusters-from-seurat-with-cleaned-up-reference-annotation.pdf"
+    ),
+    plot = a_plot,
+    width = 15,
+    height = 15,
+    units = "in",
+    dpi = 300
+)
+
+```
+
+- Plot ERAP2 expression
+
+```{r}
+
+DefaultAssay(annotated_cells) <- "RNA"
+"ERAP2" %in% rownames(annotated_cells)
+
+library(ggplot2)
+
+p_erap2_dot <- DotPlot(
+    annotated_cells,
+    features = "ERAP2",
+    group.by = "cluster_cell_type",
+    assay = "RNA"
+) +
+    RotatedAxis() +
+    labs(
+        x = NULL,
+        y = NULL,
+        title = "ERAP2 expression across cell types"
+    )
+
+
+
+ggsave(
+    filename = file.path(
+        plot_dir,
+        "20-04-plot-expression-of-ERAP2-in-cleaned-up-reference-annotation.png"
+    ),
+    plot = p_erap2_dot,
+    width = 4,
+    height = 7,
+    units = "in",
+    dpi = 300
+)
+
+```
+
+- Plot a violin plot
+
+```{r}
+
+p_erap2_violin <- VlnPlot(
+    annotated_cells,
+    log = T,
+    features = "ERAP2",
+    group.by = "cluster_cell_type",
+    cols = cell_type_colours,
+    assay = "RNA",
+    pt.size = 0
+) +
+    RotatedAxis() +
+    labs(
+        x = NULL,
+        y = "ERAP2 expression",
+        title = "ERAP2 expression across cell types"
+    )
+
+ggsave(
+    filename = file.path(
+        plot_dir,
+        "20-05-plot-violin-plot-of-ERAP2-in-cleaned-up-reference-annotation.pdf"
+    ),
+    plot = p_erap2_violin,
+    width = 10,
+    height = 5,
+    units = "in",
+    dpi = 300
+)
+
+```
+
+- Quantify ERAP2 expression 
+
+```{r}
+
+library(dplyr)
+library(tibble)
+
+erap2_expr <- FetchData(
+    annotated_cells,
+    vars = c("ERAP2", "cluster_cell_type"),
+    layer = "data"
+)
+
+erap2_summary <- erap2_expr |>
+    group_by(cluster_cell_type) |>
+    summarise(
+        n_cells = n(),
+        mean_expression = mean(ERAP2),
+        median_expression = median(ERAP2),
+        n_ERAP2_positive = sum(ERAP2 > 0),
+        pct_ERAP2_positive = 100 * mean(ERAP2 > 0),
+        .groups = "drop"
+    ) |>
+    arrange(desc(mean_expression))
+
+erap2_summary
+> erap2_summary
+# # A tibble: 8 × 6
+#   cluster_cell_type n_cells mean_expression median_expression n_ERAP2_positive
+#   <fct>               <int>           <dbl>             <dbl>            <int>
+# 1 Lymphocytes          2277          0.269                  0              497
+# 2 Endothelial          2091          0.121                  0              215
+# 3 Microglia           16245          0.103                  0             1474
+# 4 Meninges             3041          0.101                  0              257
+# 5 OPC                  6288          0.0560                 0              308
+# 6 Oligodendrocytes    51354          0.0448                 0             2052
+# 7 Neurons              2189          0.0443                 0               90
+# 8 Astrocytes          15347          0.0371                 0              523
+
+```
+
+- Split the table by ALS or control
+
+```{r}
+
+annotated_cells$celltype_condition <- interaction(
+    annotated_cells$cluster_cell_type,
+    annotated_cells$condition,
+    sep = " | "
+)
+
+library(dplyr)
+library(ggplot2)
+
+counts <- LayerData(
+    annotated_cells,
+    assay = "RNA",
+    layer = "counts"
+)
+
+meta <- annotated_cells[[]]
+meta$ERAP2_count <- as.numeric(
+    counts["ERAP2", rownames(meta)]
+)
+
+meta$total_counts <- Matrix::colSums(
+    counts[, rownames(meta), drop = FALSE]
+)
+
+erap2_patient_cpm <- meta |>
+    group_by(
+        patient_id,
+        condition,
+        cluster_cell_type
+    ) |>
+    summarise(
+        ERAP2_counts = sum(ERAP2_count),
+        total_counts = sum(total_counts),
+
+        n_cells = n(),
+
+        n_ERAP2_positive = sum(ERAP2_count > 0),
+        pct_expression = 100 * mean(ERAP2_count > 0),
+
+        .groups = "drop"
+    ) |>
+    mutate(
+        ERAP2_CPM =
+            ERAP2_counts / total_counts * 1e6
+    )
+
+
+erap2_summary <- erap2_patient_cpm |>
+    group_by(
+        cluster_cell_type,
+        condition
+    ) |>
+    summarise(
+        mean_CPM = mean(ERAP2_CPM),
+        median_CPM = median(ERAP2_CPM),
+
+        mean_pct_expression = mean(pct_expression),
+
+        n_patients = n_distinct(patient_id),
+
+        .groups = "drop"
+    ) |>
+    mutate(
+        ERAP2_condition = paste("ERAP2", condition)
+    )
+
+# erap2_summary <- erap2_data |>
+#     group_by(
+#         cluster_cell_type,
+#         condition
+#     ) |>
+#     summarise(
+#         avg_expression = mean(ERAP2),
+#         pct_expression = 100 * mean(ERAP2 > 0),
+#         .groups = "drop"
+#     ) |>
+#     mutate(
+#         ERAP2_condition = paste(
+#             "ERAP2",
+#             condition
+#         )
+#     )
+erap2_summary$ERAP2_condition <- factor(
+    erap2_summary$ERAP2_condition,
+    levels = c(
+        "ERAP2 ALS",
+        "ERAP2 control"
+    )
+)
+
+p_erap2_condition <- ggplot(
+    erap2_summary,
+    aes(
+        x = cluster_cell_type,
+        y = ERAP2_condition,
+        size = mean_pct_expression,
+        colour = mean_CPM
+    )
+) +
+    geom_point() +
+    scale_size(
+        name = "Percent expressed",
+        range = c(1, 8)
+    ) +
+    scale_colour_viridis(
+        option = "A",
+        name = "ERAP2 CPM"
+    ) +
+    labs(
+        x = NULL,
+        y = NULL,
+        title = "ERAP2 expression by cell type and condition"
+    ) +
+    theme_classic() +
+    theme(
+        axis.text.x = element_text(
+            angle = 90,
+            hjust = 0.5,
+            vjust = 1
+        )
+    )
+
+# p_erap2_condition
+
+
+
+ggsave(
+    filename = file.path(
+        plot_dir,
+        "20-06-plot-interaction-effect-between-ERAP2-and-condition-in-cleaned-up-reference-annotation.pdf"
+    ),
+    plot = p_erap2_condition,
+    width = 10,
+    height = 5,
+    units = "in",
+    dpi = 300
+)
+
+```
+
+- Make enrichment score
+
+```{r}
+
+DefaultAssay(annotated_cells) <- "RNA"
+
+counts <- LayerData(
+    annotated_cells,
+    assay = "RNA",
+    layer = "counts"
+)
+
+meta <- annotated_cells[[]]
+
+meta$ERAP2_positive <- as.numeric(
+    counts["ERAP2", rownames(meta)]
+) > 0
+
+library(dplyr)
+
+erap2_patient <- meta |>
+    group_by(
+        patient_id,
+        condition,
+        cluster_cell_type
+    ) |>
+    summarise(
+        n_cells = n(),
+        n_ERAP2_positive = sum(ERAP2_positive),
+        frac_ERAP2_positive = mean(ERAP2_positive),
+        .groups = "drop"
+    )
+
+erap2_patient |>
+    arrange(cluster_cell_type, patient_id)
+
+```
+
+- Compute enrichment
+
+```{r}
+
+library(tidyr)
+
+erap2_enrichment <- erap2_patient |>
+    group_by(
+        cluster_cell_type,
+        condition
+    ) |>
+    summarise(
+        mean_frac = mean(frac_ERAP2_positive),
+        median_frac = median(frac_ERAP2_positive),
+        n_patients = n_distinct(patient_id),
+        .groups = "drop"
+    ) |>
+    pivot_wider(
+        names_from = condition,
+        values_from = c(
+            mean_frac,
+            median_frac,
+            n_patients
+        )
+    ) |>
+    mutate(
+
+        # Absolute difference in percentage points
+        delta_percent =
+            100 * (mean_frac_ALS - mean_frac_control),
+
+        # Relative enrichment
+        fold_enrichment =
+            mean_frac_ALS / mean_frac_control,
+
+        # Symmetric enrichment score
+        log2_enrichment =
+            log2(fold_enrichment)
+    )
+
+
+```
+
+- Plot the enrichment
+
+```{r}
+
+p_enrichment <- ggplot(
+    erap2_enrichment,
+    aes(
+        x = reorder(
+            cluster_cell_type,
+            log2_enrichment
+        ),
+        y = log2_enrichment
+    )
+) +
+    geom_col(aes(fill = cluster_cell_type)) +
+    scale_fill_manual("cell type", values = cell_type_colours) + 
+    geom_hline(
+        yintercept = 0,
+        linetype = 2
+    ) +
+    coord_flip() +
+    labs(
+        x = NULL,
+        y = "ERAP2 detection enrichment\nlog2(ALS / control)",
+        title = "Relative enrichment of ERAP2-positive cells"
+    ) +
+    theme_classic()
+
+
+ggsave(
+    filename = file.path(
+        plot_dir,
+        "20-07-plot-enrichment-of-ERAP2-expressing-cells-cleaned-up-reference-annotation.pdf"
+    ),
+    plot = p_enrichment,
+    width = 10,
+    height = 5,
+    units = "in",
+    dpi = 300
+)
+
+```
+
+- Fetch odds ratio
+
+```{r}
+
+library(lme4)
+
+meta$condition <- factor(
+    meta$condition,
+    levels = c("control", "ALS")
+)
+
+fit_erap2_detection <- glmer(
+    ERAP2_positive ~
+        condition * cluster_cell_type +
+        (1 | patient_id),
+    data = meta,
+    family = binomial
+)
+
+library(emmeans)
+
+emm <- emmeans(
+    fit_erap2_detection,
+    ~ condition | cluster_cell_type
+)
+
+erap2_OR <- contrast(
+    emm,
+    method = list(
+        ALS_vs_control = c(-1, 1)
+    )
+)
+
+summary(
+    erap2_OR,
+    infer = TRUE,
+    type = "response"
+)
+
+
+```
+
+- Fetch odds ratio dataframe
+
+```{r}
+
+erap2_OR_df <- as.data.frame(
+    summary(
+        erap2_OR,
+        infer = TRUE,
+        type = "response"
+    )
+)
+
+```
+
+- Plot odds ratio
+
+```{r}
+
+library(ggplot2)
+
+p_or_plot <- ggplot(
+    erap2_OR_df,
+    aes(
+        y = reorder(
+            cluster_cell_type,
+            odds.ratio
+        ),
+        x = odds.ratio
+    )
+) +
+    geom_errorbarh(
+        aes(
+            xmin = asymp.LCL,
+            xmax = asymp.UCL
+        ),
+        height = 0.15
+    ) +
+    geom_point(size = 3, shape = 21, color = "#000000", aes(fill = cluster_cell_type)) +
+    geom_vline(
+        xintercept = 1,
+        linetype = 2
+    ) +
+    scale_x_log10() +
+    scale_fill_manual("cell type", values = cell_type_colours) +
+    labs(
+        x = "ALS / control odds ratio for ERAP2 detection",
+        y = NULL,
+        title = "ERAP2-positive cell enrichment in ALS"
+    ) +
+    theme_classic()
+
+ggsave(
+    filename = file.path(
+        plot_dir,
+        "20-08-plot-odds-ratio-of-ERAP2-expressing-cells-cleaned-up-reference-annotation.pdf"
+    ),
+    plot = p_or_plot,
+    width = 5,
+    height = 10,
+    units = "in",
+    dpi = 300
+)
+
+```
+
+- Import the module
+
+
+```{r}
+
+genic_count_list <- readRDS(file.path("11-postmortem-data-analysis/rdata_files/", "01-gene-level-counts-of-postmortem-samples.rds"))
+wgcna_modules_df <- readRDS(file.path("11-postmortem-data-analysis/rdata_files/", "04-postmortem-WGCNA-gene-modules.rds"))
+
+erap2_module_df <- wgcna_modules_df[wgcna_modules_df$modules == "M3",]
+gene_list <- erap2_module_df$gene_name
+
+gene_count_matrix <- genic_count_list$counts
+cpm_matrix <- t(t(gene_count_matrix) / (colSums(gene_count_matrix)/1e6))
+
+
+```
+
+- Get NYGC metadata
+
+```{r}
+
+coldata_df <- genic_count_list$coldata
+coldata_df$expr <- cpm_matrix[gene_ranges$gene_id[gene_ranges$gene_name == "ERAP2" & !is.na(gene_ranges$gene_name)],
+    coldata_df$column_id]
+coldata_df$tissue_group <- "spinal_cord"
+coldata_df$tissue_group[coldata_df$tissue %in% c("Cortex_Motor", "Cortex", "Cerebellum")] <- "brain"
+
+subset_matrix <- as.data.frame(cpm_matrix[rownames(cpm_matrix) %in% 
+    gene_ranges$gene_id[gene_ranges$gene_biotype == "protein_coding"],])
+keep_matrix <- subset_matrix[(rowSums(subset_matrix == 0) / ncol(subset_matrix)) < 0.10,]
+
+
+coldata_df$matrix_row <- match(coldata_df$column_id, colnames(keep_matrix))
+
+cols_split_by_patient <- split(coldata_df, paste(coldata_df$subject_id, coldata_df$tissue))
+
+patient_matrix <- do.call(cbind, lapply(cols_split_by_patient, function(x){
+    if(nrow(x) == 1){
+        return(keep_matrix[,x$matrix_row])
+    }
+    return(rowMeans(keep_matrix[,x$matrix_row]))
+}))
+selected_patient_matrix <- patient_matrix[erap2_module_df$genes,]
+
+
+patient_df <- do.call(rbind, lapply(cols_split_by_patient, function(temp_df){
+    return_df <- unique(temp_df[,!(colnames(temp_df) %in% 
+        c("X", "sample_name", "alignment_file", "alignment_file_dir",
+          "isPairedEnd", "strand_specificity", "samplesheet_path", 
+          "column_id", "sample_id", "mutation", "site_of_motor_onset",
+          "instrument", "rin", "expr", "tissue_group", "matrix_row"))])
+    if(nrow(return_df) > 1){
+        # message(paste(unique(return_df$subject_id), unique(return_df$tissue)))
+        if("N/A" %in% return_df$mnd_with_ftd & "Yes" %in% return_df$mnd_with_ftd){
+            return_df <- return_df[return_df$mnd_with_ftd == "Yes",]
+        }else if("N/A" %in% return_df$mnd_with_ftd & "No" %in% return_df$mnd_with_ftd){
+            return_df <- return_df[return_df$mnd_with_ftd == "No",]
+        }else{
+            stop(paste(return_df$subject_id, return_df$tissue))
+        }
+        # message(nrow(return_df))
+    }
+    # return_df$expr <- mean(temp_df$expr)
+    return_df$column_id <- paste(return_df$subject_id, return_df$tissue)
+    return(return_df)
+}))
+patient_df$age_at_death[patient_df$age_at_death == "90 or Older"] <- "90"
+patient_df$age_at_death <- as.numeric(patient_df$age_at_death)
+patient_df$age_at_onset <- as.numeric(patient_df$age_at_symptom_onset)
+patient_df$disease_duration <- as.numeric(patient_df$disease_duration_in_months)
+patient_df$disease_duration_in_months <- as.numeric(patient_df$disease_duration_in_months)
+
+# Select cervical patient data
+
+cervical_patient_df <- patient_df[patient_df$tissue == "Spinal_Cord_Cervical",]
+cervical_selected_matrix <- selected_patient_matrix[,cervical_patient_df$column_id]
+rownames(cervical_selected_matrix) <- erap2_module_df$gene_name
+cervical_selected_matrix <- cervical_selected_matrix[!is.na(rownames(cervical_selected_matrix)),]
+
+```
+
+- Load the gene list from WGCNA
+
+```{r}
+
+genic_count_list <- readRDS(file.path("11-postmortem-data-analysis/rdata_files/", "01-gene-level-counts-of-postmortem-samples.rds"))
+wgcna_modules_df <- readRDS(file.path("11-postmortem-data-analysis/rdata_files/", "04-postmortem-WGCNA-gene-modules.rds"))
+
+erap2_module_df <- wgcna_modules_df[wgcna_modules_df$modules == "M3",]
+gene_list <- erap2_module_df$gene_name
+
+gene_count_matrix <- genic_count_list$counts
+cpm_matrix <- t(t(gene_count_matrix) / (colSums(gene_count_matrix)/1e6))
+
+```
+
+- Get the patient metadata
+
+```{r}
+
+coldata_df <- genic_count_list$coldata
+coldata_df$expr <- cpm_matrix[gene_ranges$gene_id[gene_ranges$gene_name == "ERAP2" & !is.na(gene_ranges$gene_name)],
+    coldata_df$column_id]
+coldata_df$tissue_group <- "spinal_cord"
+coldata_df$tissue_group[coldata_df$tissue %in% c("Cortex_Motor", "Cortex", "Cerebellum")] <- "brain"
+
+subset_matrix <- as.data.frame(cpm_matrix[rownames(cpm_matrix) %in% 
+    gene_ranges$gene_id[gene_ranges$gene_biotype == "protein_coding"],])
+keep_matrix <- subset_matrix[(rowSums(subset_matrix == 0) / ncol(subset_matrix)) < 0.10,]
+
+
+coldata_df$matrix_row <- match(coldata_df$column_id, colnames(keep_matrix))
+
+cols_split_by_patient <- split(coldata_df, paste(coldata_df$subject_id, coldata_df$tissue))
+
+patient_matrix <- do.call(cbind, lapply(cols_split_by_patient, function(x){
+    if(nrow(x) == 1){
+        return(keep_matrix[,x$matrix_row])
+    }
+    return(rowMeans(keep_matrix[,x$matrix_row]))
+}))
+selected_patient_matrix <- patient_matrix[erap2_module_df$genes,]
+
+
+patient_df <- do.call(rbind, lapply(cols_split_by_patient, function(temp_df){
+    return_df <- unique(temp_df[,!(colnames(temp_df) %in% 
+        c("X", "sample_name", "alignment_file", "alignment_file_dir",
+          "isPairedEnd", "strand_specificity", "samplesheet_path", 
+          "column_id", "sample_id", "mutation", "site_of_motor_onset",
+          "instrument", "rin", "expr", "tissue_group", "matrix_row"))])
+    if(nrow(return_df) > 1){
+        # message(paste(unique(return_df$subject_id), unique(return_df$tissue)))
+        if("N/A" %in% return_df$mnd_with_ftd & "Yes" %in% return_df$mnd_with_ftd){
+            return_df <- return_df[return_df$mnd_with_ftd == "Yes",]
+        }else if("N/A" %in% return_df$mnd_with_ftd & "No" %in% return_df$mnd_with_ftd){
+            return_df <- return_df[return_df$mnd_with_ftd == "No",]
+        }else{
+            stop(paste(return_df$subject_id, return_df$tissue))
+        }
+        # message(nrow(return_df))
+    }
+    # return_df$expr <- mean(temp_df$expr)
+    return_df$column_id <- paste(return_df$subject_id, return_df$tissue)
+    return(return_df)
+}))
+patient_df$age_at_death[patient_df$age_at_death == "90 or Older"] <- "90"
+patient_df$age_at_death <- as.numeric(patient_df$age_at_death)
+patient_df$age_at_onset <- as.numeric(patient_df$age_at_symptom_onset)
+patient_df$disease_duration <- as.numeric(patient_df$disease_duration_in_months)
+patient_df$disease_duration_in_months <- as.numeric(patient_df$disease_duration_in_months)
+
+# Select cervical patient data
+
+cervical_patient_df <- patient_df[patient_df$tissue == "Spinal_Cord_Cervical",]
+cervical_selected_matrix <- selected_patient_matrix[,cervical_patient_df$column_id]
+rownames(cervical_selected_matrix) <- erap2_module_df$gene_name
+cervical_selected_matrix <- cervical_selected_matrix[!is.na(rownames(cervical_selected_matrix)),]
+
+```
+
+- Perform PCA
+
+```{r}
+
+X_bulk <- t(cervical_selected_matrix)
+
+X_bulk_z <- scale(X_bulk)
+
+train_center <- attr(X_bulk_z, "scaled:center")
+train_scale  <- attr(X_bulk_z, "scaled:scale")
+
+pca_module <- prcomp(
+    X_bulk_z,
+    center = FALSE,
+    scale. = FALSE
+)
+module_weights <- pca_module$rotation[, 1]
+
+sort(
+    module_weights,
+    decreasing = TRUE
+)
+#      ABCA6      SBSPON        CD69       ERAP2        TC2N    CRISPLD1
+#  0.01258666 -0.02680694 -0.02771589 -0.02821076 -0.03400131 -0.03835868
+#   TNFRSF11B      CLEC5A      IL1RL1    SERPINE1        GBP3       NPTX2
+# -0.04332472 -0.04548980 -0.04875472 -0.04960629 -0.04988510 -0.05154587
+#       FCGBP      CHI3L1        STC1        MT1E          CP        PI15
+# -0.05295774 -0.05326067 -0.05330639 -0.05359312 -0.05592103 -0.05690500
+#      TMIGD3       FABP5        BAG3       APOL4    SIGLEC14       THBS1
+# -0.05738140 -0.05972218 -0.05979383 -0.06045913 -0.06160252 -0.06241998
+#        JPH2       KLHL6       F13A1      CHI3L2        CD44        ACAN
+# -0.06559491 -0.06654864 -0.06681343 -0.06704093 -0.06740365 -0.06759989
+#       DDIT4        CPVL       RUNX3     ANGPTL4       VSIG4      SPOCD1
+# -0.06817258 -0.06866462 -0.06876930 -0.06898169 -0.06969799 -0.06998778
+#         ADM      RNASE6         CR1        RGS1      S100A8       FKBP5
+# -0.07001335 -0.07045107 -0.07050332 -0.07054584 -0.07059674 -0.07116682
+#     ALOX15B          F3        SPP1       ABCC3        CCL2    SERPINA5
+# -0.07168758 -0.07179829 -0.07207464 -0.07226770 -0.07284279 -0.07453214
+#        ATF3       RGS16       CXCR4      GPR183        STC2       ADAM8
+# -0.07473119 -0.07536473 -0.07645065 -0.07650843 -0.07693102 -0.07729050
+#         SFN     ALOX5AP        CD93         FGR       PLIN2    C11orf96
+# -0.07772730 -0.07780264 -0.07822277 -0.07833098 -0.07961512 -0.08014971
+#      FCGR3A    ADAMTSL4      BTBD19        MSR1       VEGFA      S100A9
+# -0.08017939 -0.08021912 -0.08056543 -0.08074527 -0.08137755 -0.08148023
+#    ADAMTS15       SYTL3      SPRED3        MT1X      SLC2A3        MT1M
+# -0.08201339 -0.08219316 -0.08226730 -0.08292198 -0.08360961 -0.08368140
+#          GK       SBNO2       FOSL2       KCNE4       LOXL2       ANXA1
+# -0.08392747 -0.08401255 -0.08455049 -0.08482489 -0.08483757 -0.08577514
+#       GRHL3        HAMP       ITPKC        THBD      MS4A4A      IFITM2
+# -0.08624594 -0.08682302 -0.08752420 -0.08774304 -0.08792444 -0.08818469
+#     GADD45B        KYNU       ZFP36       SOCS3        MT2A        JAK3
+# -0.08839513 -0.08856856 -0.08872796 -0.08929858 -0.08936055 -0.08950963
+#      IFITM3        BCL3        GLRX      HILPDA       TGFBI      SLAMF8
+# -0.08997940 -0.09005007 -0.09034808 -0.09079878 -0.09085871 -0.09132788
+#       IL1R1       CD163       CH25H        SOD2       TGFB2         MYC
+# -0.09169862 -0.09176143 -0.09176749 -0.09191648 -0.09204274 -0.09319851
+#        HRH2        C1QB      ARID5A        TYMP       IER5L       DEPP1
+# -0.09330070 -0.09354193 -0.09375414 -0.09391217 -0.09391370 -0.09398905
+#        RGS2       PLAUR        EMP1      MTHFD2        NNMT        HRH1
+# -0.09423183 -0.09430397 -0.09438561 -0.09447373 -0.09476443 -0.09521334
+#      FCER1G    SERPINA1    KIAA0040        TLR8       CDCP1     GADD45A
+# -0.09529885 -0.09573566 -0.09574942 -0.09645227 -0.09672068 -0.09724987
+#        MAFF       NAMPT        PLK3    SLC39A14        GBP2        TLR2
+# -0.09754060 -0.09757538 -0.09829429 -0.09845825 -0.09880805 -0.09925285
+#      CDKN1A       ACTN1       C5AR1       RASD1      LILRB3       CEBPD
+# -0.09987120 -0.09989318 -0.10007892 -0.10022552 -0.10065522 -0.10307241
+#     SLC16A3    SERPINA3      ADGRE2        SRGN       RAB20     SLC11A1
+# -0.10337698 -0.10362667 -0.10592058 -0.10627646 -0.10745444 -0.10782999
+#       MYO1G      FCGR2A        OSMR        YBX3    TNFRSF1B        FPR1
+# -0.11071424 -0.11112408 -0.11159150 -0.11190595 -0.11245374 -0.11375442
+#       NFIL3
+# -0.11431548
+
+
+```
+
+- Score NYGC samples
+
+```{r}
+
+nygc_module_score <- pca_module$x[, 1]
+
+erap2_bulk <- cervical_selected_matrix[
+    "ERAP2",
+    rownames(X_bulk)
+]
+
+if (
+    cor(
+        nygc_module_score,
+        erap2_bulk,
+        method = "spearman"
+    ) < 0
+) {
+    module_weights <- -module_weights
+    nygc_module_score <- -nygc_module_score
+}
+
+
+```
+
+- Select all of the different cell types
+
+```{r}
+
+cell_types <- c("Astrocytes", "Lymphocytes", "Microglia", "Neurons", "Oligodendrocytes")
+patient_cell_type_scores_df_list <- lapply(cell_types, function(a_cell_type){
+    selected_cells <- subset(
+        annotated_cells,
+        subset = cluster_cell_type == a_cell_type
+    )
+    # Make patient metadata
+    patient_meta <- selected_cells[[]] |>
+        distinct(
+            patient_id,
+            condition
+        )
+    patient_meta
+    # Pseudobulk
+    pb_counts <- AggregateExpression(
+        selected_cells,
+        assays = "RNA",
+        group.by = "patient_id",
+        return.seurat = FALSE
+    )$RNA
+    # Convert to CPM
+    pb_cpm <- sweep(
+        pb_counts,
+        2,
+        Matrix::colSums(pb_counts),
+        "/"
+    ) * 1e6
+
+    # Subset the NYGC module
+    genes_pb <- intersect(
+        names(module_weights),
+        rownames(pb_cpm)
+    )
+
+    length(module_weights)
+    length(genes_pb)
+
+    "ERAP2" %in% genes_pb
+
+    X_pb <- t(
+        pb_cpm[
+            genes_pb,
+            ,
+            drop = FALSE
+        ]
+    )
+    # Remove variable genes
+    pb_sd <- apply(
+        X_pb,
+        2,
+        sd,
+        na.rm = TRUE
+    )
+
+    keep_pb <- is.finite(pb_sd) & pb_sd > 0
+
+    X_pb <- X_pb[
+        ,
+        keep_pb,
+        drop = FALSE
+    ]
+
+    # Standardise the pseudobulk
+    X_pb_z <- scale(X_pb)
+    
+    # Carry over weights
+    weights_pb <- module_weights[
+        colnames(X_pb_z)
+    ]
+
+    stopifnot(
+        identical(
+            names(weights_pb),
+            colnames(X_pb_z)
+        )
+    )
+
+    weights_pb <- weights_pb /
+        sqrt(sum(weights_pb^2))
+
+    # Score patients
+    pb_module_score <- as.numeric(
+        X_pb_z %*% weights_pb
+    )
+
+    names(pb_module_score) <- rownames(X_pb_z)
+
+    # Build a dataframe
+
+    patient_scores_df <- data.frame(
+        cell_type = a_cell_type,
+        patient_id = stringr::str_replace_all(string = names(pb_module_score), pattern = "g", replacement = ""),
+        ERAP2_module_score = pb_module_score
+    ) |>
+        left_join(
+            patient_meta,
+            by = "patient_id"
+        )
+    # Return the score df
+
+    # Fetch gene level contributions for each cell type
+    gene_contrib <- sweep(
+        X_pb_z,
+        2,
+        weights_pb,
+        "*"
+    )
+
+    condition_vector <- patient_scores$condition[
+        match(
+            rownames(gene_contrib),
+            paste("g",patient_scores$patient_id, sep = "")
+        )
+    ]
+
+    # Calculate ALS vs Control contributions
+    delta_contrib <- apply(
+        gene_contrib,
+        2,
+        function(x) {
+
+            mean(
+                x[condition_vector == "ALS"],
+                na.rm = TRUE
+            ) -
+            mean(
+                x[condition_vector == "control"],
+                na.rm = TRUE
+            )
+        }
+    )
+
+    delta_df <- data.frame(
+        cell_type = a_cell_type,
+        gene = names(delta_contrib),
+        delta_contribution = delta_contrib)
+    
+    delta_df <- delta_df[order(abs(delta_contrib), decreasing = F),]
+    delta_df$rank <- seq_len(nrow(delta_df))
+
+    return(list(deltas = delta_df, scores = patient_scores_df))
+})
+names(patient_cell_type_scores_df_list) <- cell_types
+
+
+patient_cell_type_scores_df <- do.call(rbind, lapply(patient_cell_type_scores_df_list, function(x){
+    x$scores
+}))
+rownames(patient_cell_type_scores_df) <- NULL
+
+# do.call(rbind, patient_cell_type_scores_df_list)
+
+
+```
+
+- Plot the module score
+
+```{r}
+
+require(dplyr)
+require(broom)
+
+wilcox_test_tib <- patient_cell_type_scores_df |>
+group_by(cell_type) |> 
+group_modify(~ broom::tidy(
+    wilcox.test(ERAP2_module_score ~ condition, data = .x)
+)) |> 
+ungroup() |> 
+mutate(padj = p.adjust(p.value, method = "BH"))
+
+as.data.frame(wilcox_test_tib)
+#          cell_type statistic     p.value                       method
+# 1       Astrocytes         0 0.004040404 Wilcoxon rank sum exact test
+# 2      Lymphocytes         5 0.072727273 Wilcoxon rank sum exact test
+# 3        Microglia         2 0.016161616 Wilcoxon rank sum exact test
+# 4          Neurons         2 0.016161616 Wilcoxon rank sum exact test
+# 5 Oligodendrocytes         0 0.004040404 Wilcoxon rank sum exact test
+#   alternative       padj
+# 1   two.sided 0.01010101
+# 2   two.sided 0.07272727
+# 3   two.sided 0.02020202
+# 4   two.sided 0.02020202
+# 5   two.sided 0.01010101
+
+patient_cell_type_scores_df$cell_type <- factor(patient_cell_type_scores_df$cell_type, 
+levels = wilcox_test_tib$cell_type[order(wilcox_test_tib$padj, decreasing = F)])
+
+library(ggplot2)
+
+p_module <- ggplot(
+    patient_cell_type_scores_df,
+    aes(
+        x = condition,
+        y = ERAP2_module_score
+    )
+) +
+    geom_boxplot(
+        aes(fill = cell_type),
+        color = "#000000",
+        outlier.shape = NA,
+        width = 0.5
+    ) +
+    geom_jitter(
+        aes(fill = cell_type),
+        color = "#000000",
+        shape = 21, 
+        width = 0.08,
+        size = 3
+    ) +
+    scale_fill_manual("cell types", values = cell_type_colours[unique(as.character(patient_cell_type_scores_df$cell_type))]) + 
+    facet_wrap(cell_type ~ ., scales = "free", nrow = 1, ncol = 5) + 
+    labs(
+        x = NULL,
+        y = "ERAP2-associated module score",
+        title = "ERAP2-associated programme in astrocytes"
+    ) +
+    theme_classic()
+
+
+ggsave(
+    filename = file.path(
+        plot_dir,
+        "20-09-plot-module-score-of-ERAP2-module-M3-in-scrnaseq-data.pdf"
+    ),
+    plot = p_module,
+    width = 10,
+    height = 5,
+    units = "in",
+    dpi = 300
+)
+
+```
+
+- Plot contributions
+
+```{r}
+
+ticks <- delta_df$rank
+top_genes <- 25
+# delta_df <- do.call(rbind, lapply(patient_cell_type_scores_df_list, function(x){
+#     x$deltas[x$deltas$rank <= 25,]
+# })) 
+
+plot_list <- lapply(patient_cell_type_scores_df_list, function(x){
+    delta_df <- x$deltas
+    selected_delta_df <- delta_df[delta_df$rank > (max(delta_df$rank) - top_genes),]
+    selected_delta_df$gene <- factor(selected_delta_df$gene, levels = selected_delta_df$gene)
+    p_contrib <- ggplot(
+        selected_delta_df,
+        aes(
+            x = gene,
+            y = delta_contribution
+        )
+    ) +
+        geom_col() +
+        geom_hline(
+            yintercept = 0,
+            linetype = 2
+        ) +
+        # facet_wrap(. ~ cell_type, scales = "free") + 
+        coord_flip() +
+        labs(
+            x = NULL,
+            y = "Mean contribution difference\n(ALS - control)",
+            title = unique(delta_df$cell_type)
+        ) +
+        theme_classic()
+})
+
+all_plots <- patchwork::wrap_plots(plot_list[wilcox_test_tib$cell_type[order(wilcox_test_tib$padj, decreasing = F)]], nrow = 1, ncol = length(plot_list)) 
+
+
+ggsave(
+    filename = file.path(
+        plot_dir,
+        "20-11-plot-contribution-of-each-gene-in-ERAP2-module-M3-in-scrnaseq-data.pdf"
+    ),
+    plot = all_plots,
+    width = 15,
+    height = 5,
+    units = "in",
+    dpi = 300
+)
+
+```
+
+- Perform Cell level module score
+
+```{r}
+
+DefaultAssay(astro_cells) <- "RNA"
+
+if (!"data" %in% Layers(astro_cells[["RNA"]])) {
+
+    astro_cells <- NormalizeData(
+        astro_cells,
+        assay = "RNA",
+        normalization.method = "LogNormalize",
+        scale.factor = 10000,
+        verbose = FALSE
+    )
+}
+
+```

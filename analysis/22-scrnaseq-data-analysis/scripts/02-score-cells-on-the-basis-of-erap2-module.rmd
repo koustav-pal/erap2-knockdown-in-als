@@ -1,0 +1,530 @@
+---
+title:Microsatellite summary analysis
+output:pdf_document
+---
+
+
+### Main questions
+
+This document contains all of the data required for analysing the AnswerALS data.
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis/22-scrnaseq-data-analysis` and include required packages 
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis/")
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(rtracklayer)
+library(sctransform)
+library(glmGamPoi)
+
+```
+
+### 2.0 Include experiment matrix
+
+- Let's first import the counts.
+
+```{r include = FALSE, message = FALSE, warning = FALSE}
+
+analysis_path <- "22-scrnaseq-data-analysis"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+
+dir.create(save_dir, recursive = T)
+dir.create(plot_dir, recursive = T)
+dir.create(input_dir, recursive = T)
+dir.create(output_dir, recursive = T)
+
+```
+
+
+### 3.0 Analysis
+
+- Fetch the annotation
+
+```{r}
+
+annotation_gtf <- "/data/shared/public_datasets/Genomes/ENSEMBL_hg38/Homo_sapiens.GRCh38.104.chr_patch_hapl_scaff.gtf"
+annotation_ranges <- import.gff2(annotation_gtf)
+gene_ranges <- annotation_ranges[annotation_ranges$type == "gene"]
+
+```
+
+- Make a list of candidate cells
+
+```{r}
+
+list_of_cell_programs <- readRDS(file.path(save_dir, "01-saved-list-of-reference-informed-astrocyte-classified-cells.rds"))
+
+astro_core <- list_of_cell_programs$reference_annotated_and_clustered_astrocytes
+astro <- list_of_cell_programs$reference_annotated_astrocytes
+
+```
+
+- Load the gene list from WGCNA
+
+```{r}
+
+genic_count_list <- readRDS(file.path("11-postmortem-data-analysis/rdata_files/", "01-gene-level-counts-of-postmortem-samples.rds"))
+wgcna_modules_df <- readRDS(file.path("11-postmortem-data-analysis/rdata_files/", "04-postmortem-WGCNA-gene-modules.rds"))
+
+erap2_module_df <- wgcna_modules_df[wgcna_modules_df$modules == "M3",]
+gene_list <- erap2_module_df$gene_name
+
+gene_count_matrix <- genic_count_list$counts
+cpm_matrix <- t(t(gene_count_matrix) / (colSums(gene_count_matrix)/1e6))
+
+```
+
+- Get the patient metadata
+
+```{r}
+
+coldata_df <- genic_count_list$coldata
+coldata_df$expr <- cpm_matrix[gene_ranges$gene_id[gene_ranges$gene_name == "ERAP2" & !is.na(gene_ranges$gene_name)],
+    coldata_df$column_id]
+coldata_df$tissue_group <- "spinal_cord"
+coldata_df$tissue_group[coldata_df$tissue %in% c("Cortex_Motor", "Cortex", "Cerebellum")] <- "brain"
+
+subset_matrix <- as.data.frame(cpm_matrix[rownames(cpm_matrix) %in% 
+    gene_ranges$gene_id[gene_ranges$gene_biotype == "protein_coding"],])
+keep_matrix <- subset_matrix[(rowSums(subset_matrix == 0) / ncol(subset_matrix)) < 0.10,]
+
+
+coldata_df$matrix_row <- match(coldata_df$column_id, colnames(keep_matrix))
+
+cols_split_by_patient <- split(coldata_df, paste(coldata_df$subject_id, coldata_df$tissue))
+
+patient_matrix <- do.call(cbind, lapply(cols_split_by_patient, function(x){
+    if(nrow(x) == 1){
+        return(keep_matrix[,x$matrix_row])
+    }
+    return(rowMeans(keep_matrix[,x$matrix_row]))
+}))
+selected_patient_matrix <- patient_matrix[erap2_module_df$genes,]
+
+
+patient_df <- do.call(rbind, lapply(cols_split_by_patient, function(temp_df){
+    return_df <- unique(temp_df[,!(colnames(temp_df) %in% 
+        c("X", "sample_name", "alignment_file", "alignment_file_dir",
+          "isPairedEnd", "strand_specificity", "samplesheet_path", 
+          "column_id", "sample_id", "mutation", "site_of_motor_onset",
+          "instrument", "rin", "expr", "tissue_group", "matrix_row"))])
+    if(nrow(return_df) > 1){
+        # message(paste(unique(return_df$subject_id), unique(return_df$tissue)))
+        if("N/A" %in% return_df$mnd_with_ftd & "Yes" %in% return_df$mnd_with_ftd){
+            return_df <- return_df[return_df$mnd_with_ftd == "Yes",]
+        }else if("N/A" %in% return_df$mnd_with_ftd & "No" %in% return_df$mnd_with_ftd){
+            return_df <- return_df[return_df$mnd_with_ftd == "No",]
+        }else{
+            stop(paste(return_df$subject_id, return_df$tissue))
+        }
+        # message(nrow(return_df))
+    }
+    # return_df$expr <- mean(temp_df$expr)
+    return_df$column_id <- paste(return_df$subject_id, return_df$tissue)
+    return(return_df)
+}))
+patient_df$age_at_death[patient_df$age_at_death == "90 or Older"] <- "90"
+patient_df$age_at_death <- as.numeric(patient_df$age_at_death)
+patient_df$age_at_onset <- as.numeric(patient_df$age_at_symptom_onset)
+patient_df$disease_duration <- as.numeric(patient_df$disease_duration_in_months)
+patient_df$disease_duration_in_months <- as.numeric(patient_df$disease_duration_in_months)
+
+# Select cervical patient data
+
+cervical_patient_df <- patient_df[patient_df$tissue == "Spinal_Cord_Cervical",]
+cervical_selected_matrix <- selected_patient_matrix[,cervical_patient_df$column_id]
+rownames(cervical_selected_matrix) <- erap2_module_df$gene_name
+cervical_selected_matrix <- cervical_selected_matrix[!is.na(rownames(cervical_selected_matrix)),]
+
+```
+
+- Perform PCA
+
+```{r}
+
+X_bulk <- t(cervical_selected_matrix)
+
+X_bulk_z <- scale(X_bulk)
+
+train_center <- attr(X_bulk_z, "scaled:center")
+train_scale  <- attr(X_bulk_z, "scaled:scale")
+
+pca_module <- prcomp(
+    X_bulk_z,
+    center = FALSE,
+    scale. = FALSE
+)
+module_weights <- pca_module$rotation[, 1]
+
+sort(
+    module_weights,
+    decreasing = TRUE
+)
+#      ABCA6      SBSPON        CD69       ERAP2        TC2N    CRISPLD1
+#  0.01258666 -0.02680694 -0.02771589 -0.02821076 -0.03400131 -0.03835868
+#   TNFRSF11B      CLEC5A      IL1RL1    SERPINE1        GBP3       NPTX2
+# -0.04332472 -0.04548980 -0.04875472 -0.04960629 -0.04988510 -0.05154587
+#       FCGBP      CHI3L1        STC1        MT1E          CP        PI15
+# -0.05295774 -0.05326067 -0.05330639 -0.05359312 -0.05592103 -0.05690500
+#      TMIGD3       FABP5        BAG3       APOL4    SIGLEC14       THBS1
+# -0.05738140 -0.05972218 -0.05979383 -0.06045913 -0.06160252 -0.06241998
+#        JPH2       KLHL6       F13A1      CHI3L2        CD44        ACAN
+# -0.06559491 -0.06654864 -0.06681343 -0.06704093 -0.06740365 -0.06759989
+#       DDIT4        CPVL       RUNX3     ANGPTL4       VSIG4      SPOCD1
+# -0.06817258 -0.06866462 -0.06876930 -0.06898169 -0.06969799 -0.06998778
+#         ADM      RNASE6         CR1        RGS1      S100A8       FKBP5
+# -0.07001335 -0.07045107 -0.07050332 -0.07054584 -0.07059674 -0.07116682
+#     ALOX15B          F3        SPP1       ABCC3        CCL2    SERPINA5
+# -0.07168758 -0.07179829 -0.07207464 -0.07226770 -0.07284279 -0.07453214
+#        ATF3       RGS16       CXCR4      GPR183        STC2       ADAM8
+# -0.07473119 -0.07536473 -0.07645065 -0.07650843 -0.07693102 -0.07729050
+#         SFN     ALOX5AP        CD93         FGR       PLIN2    C11orf96
+# -0.07772730 -0.07780264 -0.07822277 -0.07833098 -0.07961512 -0.08014971
+#      FCGR3A    ADAMTSL4      BTBD19        MSR1       VEGFA      S100A9
+# -0.08017939 -0.08021912 -0.08056543 -0.08074527 -0.08137755 -0.08148023
+#    ADAMTS15       SYTL3      SPRED3        MT1X      SLC2A3        MT1M
+# -0.08201339 -0.08219316 -0.08226730 -0.08292198 -0.08360961 -0.08368140
+#          GK       SBNO2       FOSL2       KCNE4       LOXL2       ANXA1
+# -0.08392747 -0.08401255 -0.08455049 -0.08482489 -0.08483757 -0.08577514
+#       GRHL3        HAMP       ITPKC        THBD      MS4A4A      IFITM2
+# -0.08624594 -0.08682302 -0.08752420 -0.08774304 -0.08792444 -0.08818469
+#     GADD45B        KYNU       ZFP36       SOCS3        MT2A        JAK3
+# -0.08839513 -0.08856856 -0.08872796 -0.08929858 -0.08936055 -0.08950963
+#      IFITM3        BCL3        GLRX      HILPDA       TGFBI      SLAMF8
+# -0.08997940 -0.09005007 -0.09034808 -0.09079878 -0.09085871 -0.09132788
+#       IL1R1       CD163       CH25H        SOD2       TGFB2         MYC
+# -0.09169862 -0.09176143 -0.09176749 -0.09191648 -0.09204274 -0.09319851
+#        HRH2        C1QB      ARID5A        TYMP       IER5L       DEPP1
+# -0.09330070 -0.09354193 -0.09375414 -0.09391217 -0.09391370 -0.09398905
+#        RGS2       PLAUR        EMP1      MTHFD2        NNMT        HRH1
+# -0.09423183 -0.09430397 -0.09438561 -0.09447373 -0.09476443 -0.09521334
+#      FCER1G    SERPINA1    KIAA0040        TLR8       CDCP1     GADD45A
+# -0.09529885 -0.09573566 -0.09574942 -0.09645227 -0.09672068 -0.09724987
+#        MAFF       NAMPT        PLK3    SLC39A14        GBP2        TLR2
+# -0.09754060 -0.09757538 -0.09829429 -0.09845825 -0.09880805 -0.09925285
+#      CDKN1A       ACTN1       C5AR1       RASD1      LILRB3       CEBPD
+# -0.09987120 -0.09989318 -0.10007892 -0.10022552 -0.10065522 -0.10307241
+#     SLC16A3    SERPINA3      ADGRE2        SRGN       RAB20     SLC11A1
+# -0.10337698 -0.10362667 -0.10592058 -0.10627646 -0.10745444 -0.10782999
+#       MYO1G      FCGR2A        OSMR        YBX3    TNFRSF1B        FPR1
+# -0.11071424 -0.11112408 -0.11159150 -0.11190595 -0.11245374 -0.11375442
+#       NFIL3
+# -0.11431548
+
+
+```
+
+- Score NYGC samples
+
+```{r}
+
+nygc_module_score <- pca_module$x[, 1]
+
+erap2_bulk <- cervical_selected_matrix[
+    "ERAP2",
+    rownames(X_bulk)
+]
+
+if (
+    cor(
+        nygc_module_score,
+        erap2_bulk,
+        method = "spearman"
+    ) < 0
+) {
+    module_weights <- -module_weights
+    nygc_module_score <- -nygc_module_score
+}
+
+
+```
+
+- Intersect with the scrnaseq data
+
+```{r}
+
+signature_genes_sc <- intersect(
+    names(module_weights),
+    rownames(astro_core)
+)
+
+length(names(module_weights))
+length(signature_genes_sc)
+
+setdiff(
+    names(module_weights),
+    rownames(astro_core)
+)
+
+
+DefaultAssay(astro_core) <- "RNA"
+
+astro_core <- NormalizeData(
+    astro_core,
+    assay = "RNA",
+    normalization.method = "LogNormalize",
+    scale.factor = 10000,
+    verbose = FALSE
+)
+
+expr <- LayerData(
+    astro_core,
+    assay = "RNA",
+    layer = "data"
+)
+
+expr <- expr[
+    signature_genes_sc,
+    ,
+    drop = FALSE
+]
+expr <- as.matrix(expr)
+
+```
+
+- Remove cells with 0 variance
+
+```{r}
+
+gene_sd <- apply(
+    expr,
+    1,
+    sd,
+    na.rm = TRUE
+)
+
+keep_genes <- is.finite(gene_sd) & gene_sd > 0
+
+expr <- expr[keep_genes, , drop = FALSE]
+
+
+```
+
+- Standardise genes
+
+```{r}
+
+expr_z <- t(
+    scale(
+        t(expr)
+    )
+)
+
+
+```
+- Align PC1 weights
+
+```{r}
+
+weights_use <- module_weights[
+    rownames(expr_z)
+]
+
+stopifnot(
+    identical(
+        names(weights_use),
+        rownames(expr_z)
+    )
+)
+
+weights_use <- weights_use /
+    sqrt(sum(weights_use^2))
+
+
+```
+
+- Calculate full module score
+
+```{r}
+
+full_module_score <- as.numeric(
+    crossprod(
+        weights_use,
+        expr_z
+    )
+)
+
+astro_core$ERAP2_full_module_score <- full_module_score
+
+
+```
+
+- Plot the cell level scores
+
+```{r}
+
+
+summary(astro_core$ERAP2_full_module_score)
+
+pdf(file = file.path(plot_dir, "14-plot-histogram-of-full-erap2-module-score.pdf"))
+hist(
+    astro_core$ERAP2_full_module_score,
+    breaks = 50
+)
+dev.off()
+
+pdf(file = file.path(plot_dir, "15-plot-distribution-of-full-erap2-module-score-across-all-astrocytes.pdf"))
+FeaturePlot(
+    astro_core,
+    features = "ERAP2_full_module_score"
+)
+dev.off()
+
+```
+
+- Assign sample as patient_id 
+
+```{r}
+
+astro_core$patient_id <- astro_core$sample
+
+astro_core$condition <- ifelse(
+    grepl("_ALS_", astro_core$sample),
+    "ALS",
+    "control"
+)
+
+astro_core$condition <- factor(
+    astro_core$condition,
+    levels = c("control", "ALS")
+)
+
+
+```
+
+- Aggregate astrocyte counts by patients
+
+```{r}
+
+pb_counts <- AggregateExpression(
+    astro_core,
+    assays = "RNA",
+    group.by = "sample",
+    return.seurat = FALSE
+)$RNA
+
+library(edgeR)
+
+pb_cpm <- sweep(
+    pb_counts,
+    2,
+    Matrix::colSums(pb_counts),
+    "/"
+) * 1e6
+
+Matrix::colSums(pb_cpm)
+
+```
+
+- Project on to cervical PC1
+
+```{r}
+genes_pb <- intersect(
+    names(module_weights),
+    rownames(pb_cpm)
+)
+
+length(names(module_weights))
+length(genes_pb)
+
+"ERAP2" %in% genes_pb
+
+```
+
+- Fetch relative module score
+
+```{r}
+X_pb <- t(
+    pb_cpm[
+        genes_pb,
+        ,
+        drop = FALSE
+    ]
+)
+
+X_pb_z_local <- scale(X_pb)
+
+
+range(X_pb_z_local)
+summary(as.vector(X_pb_z_local))
+
+
+train_center <- attr(
+    X_bulk_z,
+    "scaled:center"
+)
+
+train_scale <- attr(
+    X_bulk_z,
+    "scaled:scale"
+)
+
+```
+
+- Standardise the patients
+
+```{r}
+
+weights_pb <- module_weights[colnames(X_pb_z_local)]
+
+stopifnot(
+    identical(
+        colnames(X_pb_z_local),
+        names(weights_pb)
+    )
+)
+
+```
+
+- Fit the weights
+
+```{r}
+
+pb_full_score_local <- as.numeric(
+    X_pb_z_local %*% weights_pb
+)
+
+names(pb_full_score_local) <- rownames(X_pb_z_local)
+
+```
+
+
+- Find the extreme genes
+
+```{r}
+
+extreme <- which(
+    abs(X_pb_z) > 5,
+    arr.ind = TRUE
+)
+
+extreme_df <- data.frame(
+    patient = rownames(X_pb_z)[extreme[, 1]],
+    gene = colnames(X_pb_z)[extreme[, 2]],
+    z = X_pb_z[extreme],
+    NYGC_mean = train_center[
+        colnames(X_pb_z)[extreme[, 2]]
+    ],
+    NYGC_sd = train_scale[
+        colnames(X_pb_z)[extreme[, 2]]
+    ]
+)
+
+extreme_df <- extreme_df[
+    order(abs(extreme_df$z), decreasing = TRUE),
+]
+
+head(extreme_df, 30)
+
+
+
+```

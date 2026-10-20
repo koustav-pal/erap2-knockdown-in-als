@@ -1,4 +1,4 @@
-data_dir <- normalizePath("/camp/lab/patanir/home/users/palk/")
+data_dir <- normalizePath("/export2/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis")
 project_dir <- file.path(data_dir, "Projects", "012-Ben-Clarke-ERAP1-KD")
 Sys.setenv(R_REMOTES_NO_ERRORS_FROM_WARNINGS = "true")
 # save_dir <- file.path(project_dir, "rdata_files")
@@ -74,6 +74,10 @@ expr_zscore_df$super_group <- factor(expr_zscore_df$super_group, levels = c("con
 #     linetype = "dashed",
 #     size = 0.2))
 # ggsave(width = 15, height = 5, file = file.path(analysis_plots_dir, "01-00-plot-density-plot-of-erap2-expression-tpm.pdf"), ThePlot)
+
+# boo <- unique(patient_count_df[,c("subject_id", "type", "condition")])
+# table(boo$type, boo$condition)
+
 
 
 ThePlot <- ggplot(expr_zscore_df, aes(x = condition, y = expr_zscore))

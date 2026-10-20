@@ -1,0 +1,1 @@
+awk -F',' '{read_len_1 = system("zcat " $2 " | head -n 1 | cut -d= -f2"); read_len_2 = system("zcat " $3 " | head -n 1 | cut -d= -f2"); print $1, read_len_1, read_len_2;}' pineda-2024-nfcore-sampleinfo.csv

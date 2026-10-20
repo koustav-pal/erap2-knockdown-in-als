@@ -1,12 +1,22 @@
 /repositories/
 /analysis.orig/
 *.out
+
 sync_across_locations.sh
 temp/
 tmp/
 slurm/
+/plots/
 plots/
 work/
+._temp
+._sync_across_locations.sh
+._repositories
+._data_files
+._analysis.orig
+._analysis
+._@eaDir
+._.DS_Store
 input_files/
 /synchronisation/
 /data_files/
@@ -41,3 +51,8 @@ input_files/
 /analysis/Rplots.pdf
 /analysis/src/
 .DS_Store
+
+# Local dispatch state and runtime logs
+/.cluster_dispatch/
+.nextflow.log*
+/rm_files.txt

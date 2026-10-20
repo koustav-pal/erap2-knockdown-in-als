@@ -15,7 +15,7 @@ We set out to understand the role of hypoxia in astrocytes.
 
 ```{r include = TRUE, message = FALSE, warning = FALSE}
 
-setwd("/export2/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis")
+setwd("/data/shared/lab_internal/012-Ben-Clarke-ERAP1-KD/analysis")
 require("stringr")
 require("DESeq2")
 require("PCAtools")

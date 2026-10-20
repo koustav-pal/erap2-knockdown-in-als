@@ -91,7 +91,7 @@ current_sampleinfo$tissue[current_sampleinfo$tissue %in% c("Cortex_Motor_Lateral
 current_sampleinfo <- current_sampleinfo[current_sampleinfo$tissue != "Hippocampus",]
 
 
-unique(current_sampleinfo[,c("subject_id", "mutation")])$mutation %>% table
+unique(current_sampleinfo[current_sampleinfo$mutation != "ctrl",c("subject_id", "mutation")])$mutation %>% table
 
 
 

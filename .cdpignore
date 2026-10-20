@@ -1,0 +1,4 @@
+# cdp ignore patterns (rsync --exclude-from)
+# Example:
+# *.tmp
+# data/raw/

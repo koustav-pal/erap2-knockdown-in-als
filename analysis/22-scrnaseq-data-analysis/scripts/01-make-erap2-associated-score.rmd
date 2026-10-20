@@ -1,0 +1,1348 @@
+---
+title:Microsatellite summary analysis
+output:pdf_document
+---
+
+
+### Main questions
+
+This document contains all of the data required for analysing the AnswerALS data.
+
+
+### 1.0 Package requirements
+
+- change to current working directory `/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis/22-scrnaseq-data-analysis` and include required packages 
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+setwd("/home/koustav/Projects/012-Ben-Clarke-ERAP1-KD/analysis/")
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(rtracklayer)
+library(sctransform)
+library(glmGamPoi)
+
+```
+
+### 2.0 Include experiment matrix
+
+- Let's first import the counts.
+
+```{r include = FALSE, message = FALSE, warning = FALSE}
+
+analysis_path <- "22-scrnaseq-data-analysis"
+save_dir <- file.path(analysis_path, "rdata_files")
+plot_dir <- file.path(analysis_path, "plots")
+input_dir <- file.path(analysis_path, "input_files")
+output_dir <- file.path(analysis_path, "output_files")
+
+dir.create(save_dir, recursive = T)
+dir.create(plot_dir, recursive = T)
+dir.create(input_dir, recursive = T)
+dir.create(output_dir, recursive = T)
+
+```
+
+
+### 3.0 Analysis
+
+- Fetch the annotation
+
+```{r}
+
+annotation_gtf <- "/data/shared/public_datasets/Genomes/ENSEMBL_hg38/Homo_sapiens.GRCh38.104.chr_patch_hapl_scaff.gtf"
+annotation_ranges <- import.gff2(annotation_gtf)
+gene_ranges <- annotation_ranges[annotation_ranges$type == "gene"]
+
+```
+
+- Load reference data for the Human spinal cord "A cellular taxonomy of the adult human spinal cord." by Yadav et al. 2023
+
+```{r}
+
+ref_count_matrix <- read.csv(file.path(input_dir,"GSE190442_aggregated_counts_postqc.csv"))
+ref_metadata <- read.csv(file.path(input_dir,"GSE190442_aggregated_metadata_postqc.csv"))
+
+rownames(ref_metadata) <- ref_metadata[,1]
+rownames(ref_metadata) <- stringr::str_replace_all(string = rownames(ref_metadata), pattern = "-", replace = ".")
+ref_metadata <- ref_metadata[,-1]
+
+
+# gene_ids <- gene_ranges$gene_id[match(ref_count_matrix[,1], gene_ranges$gene_name)]
+# na_filter <- !is.na(gene_ids)
+# gene_ids <- gene_ids[na_filter]
+rownames(ref_count_matrix) <- ref_count_matrix[,1]
+ref_count_matrix <- ref_count_matrix[,-1]
+# ref_count_matrix <- ref_count_matrix[na_filter,]
+# rownames(ref_count_matrix) <- gene_ids
+
+table(ref_metadata$top_level_annotation)
+    #    Astrcytes      Endothelial  Ependymal Cells      Lymphocytes 
+    #         6682              475              123              214 
+    #     Meninges        Microglia          Neurons Oligodendrocytes 
+    #         1095             9863             3153            30907 
+    #          OPC        Pericytes          Schwann 
+    #         2411              145              221 
+table(ref_metadata$subtype_annotation)
+#    Arterial Endothelial         Ependymal Cells             Ex-Dorsal-1
+#                      94                     123                      25
+#            Ex-Dorsal-10            Ex-Dorsal-11            Ex-Dorsal-12
+#                      61                      57                      40
+#             Ex-Dorsal-2             Ex-Dorsal-3             Ex-Dorsal-4
+#                      46                      66                      71
+#             Ex-Dorsal-5             Ex-Dorsal-6             Ex-Dorsal-7
+#                      49                      85                      47
+#             Ex-Dorsal-8             Ex-Dorsal-9                  Ex-M-1
+#                      44                      40                      43
+#                  Ex-M-2                  Ex-M-3                  Ex-M-4
+#                      67                      62                      58
+#                  Ex-V-1                  Ex-V-2                  Ex-V-3
+#                      37                      45                      29
+#         GM Astrocytes-1         GM Astrocytes-2                     IEG
+#                     368                    2663                      67
+#            Inh-Dorsal-1            Inh-Dorsal-2            Inh-Dorsal-3
+#                      59                      91                      34
+#            Inh-Dorsal-4            Inh-Dorsal-5            Inh-Dorsal-6
+#                      30                      39                      23
+#            Inh-Dorsal-7            Inh-Dorsal-8            Inh-Dorsal-9
+#                      59                      67                      69
+#                 Inh-M-1                 Inh-M-2                 Inh-V-1
+#                      55                      33                      90
+#                 Inh-V-2                 Inh-V-3             Lymphocytes
+#                      64                      70                     214
+#             Macrophages              Meninges-1              Meninges-2
+#                     560                     223                     159
+#              Meninges-3              Meninges-4             Microglia-1
+#                     214                     499                    1883
+#             Microglia-2             Microglia-3             Microglia-4
+#                     508                    4465                     875
+#             Motoneurons        Oligo Progenitor                 Oligo-1
+#                    1331                      26                    5342
+#                 Oligo-2                 Oligo-3                 Oligo-4
+#                    6595                     939                    9908
+#                 Oligo-5                 Oligo-6                     OPC
+#                    7236                     861                    2411
+#            Pericytes/SM  Perivascular Microglia Proliferating Microglia
+#                     145                     695                     877
+#               Schwann-1               Schwann-2     Ven/Cap Endothelial
+#                     164                      57                     381
+#           WM Astrocytes
+#                    3651
+
+```
+
+- Create Seurat object for the reference spinal cord data
+
+```{r}
+
+library(Seurat)
+# colnames(reference)[!(colnames(reference) %in% rownames(ref_metadata))]
+
+# identical(
+#     colnames(ref_count_matrix),
+#     rownames(ref_metadata)
+# )
+
+reference <- CreateSeuratObject(
+    counts = ref_count_matrix,
+    meta.data = ref_metadata,
+    project = "GSE190442")
+
+reference$cell_type <- reference$top_level_annotation
+reference$cell_subtype <- reference$subtype_annotation
+reference$donor <- reference$sample    
+
+table(reference$cell_type)
+
+```
+
+- Perform scTransform for the reference data
+
+```{r}
+
+library(future)
+
+options(future.globals.maxSize = Inf)
+
+future::plan(
+    future::sequential,
+    maxSizeOfObjects = Inf
+)
+
+reference <- SCTransform(
+    reference,
+    assay = "RNA",
+    conserve.memory = TRUE,
+    verbose = T)
+
+reference <- RunPCA(
+    reference,
+    npcs = 50,
+    verbose = FALSE
+)
+
+reference <- RunUMAP(
+    reference,
+    reduction = "pca",
+    dims = 1:30,
+    return.model = TRUE
+)
+
+```
+- Load the count data for zelic et al.
+
+```{r include = TRUE, message = FALSE, warning = FALSE}
+
+zelic_seurat_object <- readRDS("/data/shared/public_datasets/scrnaseq-als-spinal-cord-zelic-2025/nfcore/star/mtx_conversions/combined_cellbender_filter_matrix.seurat.rds")
+LayerData(zelic_seurat_object, assay = "RNA", layer = "counts") <- LayerData(zelic_seurat_object, assay = "RNA", layer = "count")
+
+```
+
+- Investigate the MT counts in the data
+
+```{r}
+
+mt_genes <- gene_ranges$gene_id[as.vector(seqnames(gene_ranges)) == "MT"]
+zelic_seurat_object[["percent.mt"]] <- PercentageFeatureSet(zelic_seurat_object, assay = "RNA", features = mt_genes)
+
+```
+
+- Plot mitochondrial contamination
+
+```{r}
+
+png(filename = file.path(plot_dir, "01-plot-mitochondrial-contamination.png"))
+VlnPlot(zelic_seurat_object, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+dev.off()
+
+```
+
+- Plot features vs mt rna
+
+```{r}
+
+png(filename = file.path(plot_dir, "02-plot-feature-scatter.png"))
+plot1 <- FeatureScatter(zelic_seurat_object, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(zelic_seurat_object, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+dev.off()
+
+```
+
+- Select cells removing for mitochondrial contamination
+
+```{r}
+
+zelic_seurat_qc <- subset(
+  zelic_seurat_object,
+  subset = nFeature_RNA >= 200 & percent.mt < 5
+)
+
+```
+
+- Replace gene names
+
+```{r}
+
+require("Matrix")
+gene_names <- gene_ranges$gene_name[match(rownames(zelic_seurat_qc), gene_ranges$gene_id)]
+na_filter <- !is.na(gene_names)
+zelic_seurat_qc <- zelic_seurat_qc[na_filter,]
+gene_names <- gene_ranges$gene_name[match(rownames(zelic_seurat_qc), gene_ranges$gene_id)]
+# rownames(query) <- gene_names
+
+# 1. Extract the count matrix from the existing assay (e.g., RNA)
+count_data <- LayerData(zelic_seurat_qc, assay = "RNA", layer = "counts")
+
+unique_gene_name <- unique(gene_names)
+
+collapse_matrix <- sparseMatrix(
+    i = match(gene_names, unique_gene_name),
+    j = seq_along(gene_names),
+    x = 1,
+    dims = c(
+        length(unique_gene_name),
+        length(gene_names)
+    ),
+    dimnames = list(
+        unique_gene_name,
+        rownames(zelic_seurat_qc)
+    )
+)
+
+gene_name_counts <- collapse_matrix %*% count_data
+# sum(count_data) == sum(gene_name_counts)
+# 3. Create a new assay object with the renamed matrix
+new_assay <- CreateAssayObject(counts = gene_name_counts)
+
+# 4. Replace the old assay in your Seurat object
+zelic_seurat_qc[["RNA"]] <- new_assay
+
+```
+
+
+- Run scTransform on the zelic dataset
+
+```{r}
+
+options(future.globals.maxSize = 8 * 1024^3)  # 8 GiB
+future::plan(future::sequential)
+
+query <- zelic_seurat_qc
+DefaultAssay(query) <- "RNA"
+
+query <- SCTransform(
+    query,
+    assay = "RNA",
+    conserve.memory = TRUE,
+    verbose = FALSE
+)
+
+DefaultAssay(query) <- "SCT"
+
+query <- RunPCA(
+    query,
+    npcs = 50,
+    verbose = FALSE
+)
+
+query <- RunUMAP(
+    query,
+    reduction = "pca",
+    dims = 1:30,
+    return.model = TRUE
+)
+
+```
+
+- Find anchors to project the query from reference
+
+```{r}
+
+anchors <- FindTransferAnchors(
+    reference = reference,
+    query = query,
+    normalization.method = "SCT",
+    reference.assay = "SCT",
+    query.assay = "SCT",
+    reference.reduction = "pca",
+    reduction = "pcaproject",
+    dims = 1:30
+)
+
+class(anchors@anchors)
+
+```
+
+- Make a projection on the query
+
+```{r}
+
+query <- MapQuery(
+    anchorset = anchors,
+    query = query,
+    reference = reference,
+    refdata = list(
+        cell_type = "cell_type",
+        cell_subtype = "cell_subtype"
+    ),
+    reference.reduction = "pca",
+    reduction.model = "umap"
+)
+
+```
+
+- Fetch the seurat_clusters
+
+```{r}
+
+query <- FindNeighbors(
+    query,
+    reduction = "pca",
+    dims = 1:30
+)
+
+query <- FindClusters(
+    query,
+    resolution = 0.5
+)
+
+table(query$seurat_clusters)
+
+```
+
+- Investigate predicted metadata
+
+```{r}
+
+colnames(query@meta.data)
+#  [1] "orig.ident"                   "nCount_RNA"                  
+#  [3] "nFeature_RNA"                 "sample"                      
+#  [5] "fastq_1"                      "fastq_2"                     
+#  [7] "Unnamed: 3"                   "percent.mt"                  
+#  [9] "nCount_SCT"                   "nFeature_SCT"                
+# [11] "predicted.cell_type.score"    "predicted.cell_type"         
+# [13] "predicted.cell_subtype.score" "predicted.cell_subtype"     
+
+# Reductions(query)
+sort(table(query$predicted.cell_type), decreasing = TRUE)
+# Oligodendrocytes        Astrcytes        Microglia      Lymphocytes 
+#            54414            14476            12155             6478 
+#              OPC         Meninges          Neurons      Endothelial 
+#             4826             1976             1662             1348 
+#        Pericytes          Schwann  Ependymal Cells 
+#              617              447              433
+
+summary(query$predicted.cell_type.score)
+# > summary(query$predicted.cell_type.score)
+#    Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#  0.2086  0.9669  1.0000  0.9367  1.0000  1.0000 
+
+```
+
+- Plot cell type prediction scores for each predicted cell type
+
+```{r}
+
+png(filename = file.path(plot_dir, "03-plot-predicted-cell-type-scores.png"))
+plot3 <- VlnPlot(
+    query,
+    features = "predicted.cell_type.score",
+    group.by = "predicted.cell_type"
+)
+plot3
+dev.off()
+
+```
+
+- Plot a umap
+
+```{r}
+
+png(filename = file.path(plot_dir, "04-plot-reference-umap-of-predicted-cell-types.png"))
+DimPlot(
+    query,
+    reduction = "ref.umap",
+    group.by = "predicted.cell_type",
+    label = TRUE,
+    repel = TRUE
+)
+dev.off()
+
+png(filename = file.path(plot_dir, "04-plot-umap-of-predicted-cell-types.png"))
+DimPlot(
+    query,
+    reduction = "umap",
+    group.by = "predicted.cell_type",
+    label = TRUE,
+    repel = TRUE
+)
+dev.off()
+
+```
+
+- Subset for astrocytes 
+
+```{r}
+
+astro <- subset(
+    query,
+    subset = predicted.cell_type == "Astrcytes"
+)
+summary(astro$predicted.cell_type.score)
+
+png(filename = file.path(plot_dir, "05-plot-histogram-of-predicted-cell-type-scores.png"))
+hist(
+    astro$predicted.cell_type.score,
+    breaks = 50
+)
+dev.off()
+
+```
+
+- Plot canonical astrocyte markers
+
+```{r}
+
+png(filename = file.path(plot_dir, "06-plot-canonical-astrocyte-markers.png"))
+FeaturePlot(
+    query,
+    features = c(
+        "AQP4",
+        "SLC1A2",
+        "SLC1A3",
+        "ALDH1L1",
+        "ATP1A2"
+    ),
+    reduction = "umap",
+    ncol = 3
+)
+dev.off()
+
+```
+
+- Plot all lineages
+
+```{r}
+
+png(filename = file.path(plot_dir, "07-plot-all-canonical-lineage-markers.png"))
+DotPlot(
+    query,
+    features = c(
+
+        # Astrocytes
+        "AQP4",
+        "SLC1A2",
+        "SLC1A3",
+        "ALDH1L1",
+        "ATP1A2",
+
+        # Oligodendrocytes
+        "MOG",
+        "MBP",
+        "PLP1",
+        "MOBP",
+
+        # OPC
+        "PDGFRA",
+        "CSPG4",
+
+        # Microglia
+        "P2RY12",
+        "CX3CR1",
+        "AIF1",
+        "CTSS",
+
+        # Endothelial
+        "CLDN5",
+        "PECAM1",
+        "FLT1"
+    ),
+    group.by = "predicted.cell_type"
+) + RotatedAxis()
+dev.off()
+
+```
+
+- Scores of query cell type
+
+```{r}
+
+table(query$predicted.cell_type)
+    #    Astrcytes      Endothelial  Ependymal Cells      Lymphocytes 
+    #        14455             1348              438             6404 
+    #     Meninges        Microglia          Neurons Oligodendrocytes 
+    #         1950            12129             1635            54293 
+    #          OPC        Pericytes          Schwann 
+    #         5009              594              577 
+
+summary(query$predicted.cell_type.score)
+#    Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#  0.1826  0.9686  1.0000  0.9390  1.0000  1.0000 
+
+unique(query$predicted.cell_type)
+#  [1] "Endothelial"      "Oligodendrocytes" "Neurons"          "Astrcytes"       
+#  [5] "Lymphocytes"      "Pericytes"        "Meninges"         "Ependymal Cells" 
+#  [9] "Microglia"        "OPC"              "Schwann"
+
+table(
+    query$seurat_clusters,
+    query$predicted.cell_type
+)
+
+#    Astrcytes Endothelial Ependymal Cells Lymphocytes Meninges Microglia
+#   0          0           1               0           0        0         0
+#   1         53          11               0        3698        3      9765
+#   2      11771           1               0          26        0         6
+#   3          0           0               0           0        0         0
+#   4          0           0               0           0        0         0
+#   5          3           0               0           2        0         0
+#   6         72           1               0          57        2         8
+#   7          3           0               0           0        0         0
+#   8         24          25               0          29     1939        13
+#   9       2321           0               0           0        0         0
+#   10         0           4               0        2107        0         5
+#   11        11        1302               0          68        1         3
+#   12         2           0               0         297        0      1392
+#   13        53           2             438           1        5         0
+#   14         0           1               0           0        0         0
+#   15         1           0               0          11        0       929
+#   16         3           0               0           0        0         0
+#   17       132           0               0           0        0         0
+#   18         0           0               0         106        0         7
+#   19         6           0               0           2        0         1
+    
+#      Neurons Oligodendrocytes   OPC Pericytes Schwann
+#   0        0            15474     0         0       0
+#   1       11               65     0         0       0
+#   2        3             1212     0         1       2
+#   3        0            12304     0         0       0
+#   4        0            10799     0         0       0
+#   5        4             7170     0         0       1
+#   6       24              999  4819         3       1
+#   7        0             3905     0         0       0
+#   8       26              469     0         8     508
+#   9        0                4     0         0       0
+#   10      31              128     0         0       2
+#   11      20               42     0       582      62
+#   12       1                2     0         0       0
+#   13     459              176     0         0       0
+#   14    1054                0     0         0       0
+#   15       0                4     0         0       0
+#   16       0              677     0         0       0
+#   17       0              411     0         0       0
+#   18       0              352     0         0       0
+#   19       2              100   190         0       1
+
+```
+
+- Now subset the astrocytes based on the reference annotation
+
+```{r}
+
+astro <- subset(
+    query,
+    subset = predicted.cell_type == "Astrcytes"
+)
+
+table(astro$seurat_clusters)
+#     0     1     2     3     4     5     6     7     8     9    10    11    12 
+#     0    53 11771     0     0     3    72     3    24  2321     0    11     2 
+#    13    14    15    16    17    18    19 
+#    53     0     1     3   132     0     6 
+
+```
+
+- Plot marker genes for cells which are primarily astrocytes and Oligodendrocytes
+
+```{r}
+
+require(ggplot2)
+
+plot_1 <- VlnPlot(
+    query,
+    features = c(
+        "AQP4",
+        "SLC1A2",
+        "SLC1A3",
+        "ALDH1L1",
+        "ATP1A2",
+        "GFAP",
+        "PLP1",
+        "MOG",
+        "MBP",
+        "MOBP"
+    ),
+    group.by = "seurat_clusters",
+    pt.size = 0,
+    raster.dpi = 300
+)
+ggsave(file = file.path(plot_dir, "08-plot-all-canonical-markers-for-astrocytes-and-oligodendrocytes.pdf"), plot_1)
+
+pdf(file = file.path(plot_dir, "09-plot-predicted-cell-types.pdf"))
+DimPlot(
+    query,
+    reduction = "umap",
+    group.by = "predicted.cell_type",
+    label = TRUE,
+    repel = TRUE
+)
+dev.off()
+
+pdf(file = file.path(plot_dir, "09-plot-seurat-clusters.pdf"))
+DimPlot(
+    query,
+    reduction = "umap",
+    group.by = "seurat_clusters",
+    label = TRUE
+)
+dev.off()
+
+```
+
+- Plot expression profiles of clusters
+
+```{r}
+
+plot_2 <- DotPlot(
+    query,
+    features = c(
+        "AQP4", "SLC1A2", "SLC1A3",
+        "ALDH1L1", "ATP1A2", "GFAP",
+        "PLP1", "MOG", "MBP", "MOBP"
+    ),
+    group.by = "seurat_clusters"
+) + RotatedAxis()
+ggsave(file = file.path(plot_dir, "10-plot-all-canonical-markers-for-astrocytes-and-oligodendrocytes-in-umap.pdf"), plot_2)
+
+```
+
+- Make a list of candidate cells
+
+```{r}
+
+
+astro <- subset(
+    query,
+    subset = predicted.cell_type == "Astrcytes"
+)
+
+astro_core <- subset(
+    query,
+    subset =
+        predicted.cell_type == "Astrcytes" &
+        seurat_clusters %in% c(2, 9)
+)
+
+list_of_cell_programs <- list(
+    reference_annotated_astrocytes = astro, 
+    reference_annotated_and_clustered_astrocytes = astro_core) 
+
+saveRDS(
+     Idents(query),
+    file = file.path(save_dir, "01-reference-annotation-idents.rds")
+)
+
+saveRDS(
+    query[[]],
+    file = file.path(
+        save_dir,
+        "01-reference-annotation-metadata.rds"
+    )
+)
+
+rna_counts <- LayerData(
+    query,
+    assay = "RNA",
+    layer = "counts"
+)
+query_save <- CreateSeuratObject(
+    counts = rna_counts,
+    meta.data = query[[]],
+    project = Project(query)
+)
+Idents(query_save) <- Idents(query)
+
+if ("data" %in% Layers(query[["RNA"]])) {
+
+    LayerData(
+        query_save,
+        assay = "RNA",
+        layer = "data"
+    ) <- LayerData(
+        query,
+        assay = "RNA",
+        layer = "data"
+    )
+}
+
+reductions_to_keep <- intersect(
+    c("pca", "umap", "ref.pca", "ref.umap"),
+    Reductions(query)
+)
+
+for (red in reductions_to_keep) {
+    query_save[[red]] <- query[[red]]
+}
+
+saveRDS(
+    query_save,
+    file = file.path(
+        save_dir,
+        "01-saved-list-of-reference-annotated-cells.rds"
+    ),
+    compress = FALSE
+)
+
+saveRDS(file = file.path(save_dir, "01-saved-list-of-reference-informed-astrocyte-classified-cells.rds"), 
+        object = list_of_cell_programs)
+
+```
+
+- Load the gene list from WGCNA
+
+```{r}
+
+genic_count_list <- readRDS(file.path("11-postmortem-data-analysis/rdata_files/", "01-gene-level-counts-of-postmortem-samples.rds"))
+wgcna_modules_df <- readRDS(file.path("11-postmortem-data-analysis/rdata_files/", "04-postmortem-WGCNA-gene-modules.rds"))
+
+erap2_module_df <- wgcna_modules_df[wgcna_modules_df$modules == "M3",]
+module_df_no_erap2 <- erap2_module_df[erap2_module_df$gene_name != "ERAP2" & !is.na(erap2_module_df$gene_name),]
+gene_list_no_erap2 <- erap2_module_df$gene_name[erap2_module_df$gene_name != "ERAP2"]
+
+gene_count_matrix <- genic_count_list$counts
+cpm_matrix <- t(t(gene_count_matrix) / (colSums(gene_count_matrix)/1e6))
+
+```
+
+- Get the patient metadata
+
+```{r}
+
+coldata_df <- genic_count_list$coldata
+coldata_df$expr <- cpm_matrix[gene_ranges$gene_id[gene_ranges$gene_name == "ERAP2" & !is.na(gene_ranges$gene_name)],
+    coldata_df$column_id]
+coldata_df$tissue_group <- "spinal_cord"
+coldata_df$tissue_group[coldata_df$tissue %in% c("Cortex_Motor", "Cortex", "Cerebellum")] <- "brain"
+
+subset_matrix <- as.data.frame(cpm_matrix[rownames(cpm_matrix) %in% 
+    gene_ranges$gene_id[gene_ranges$gene_biotype == "protein_coding"],])
+keep_matrix <- subset_matrix[(rowSums(subset_matrix == 0) / ncol(subset_matrix)) < 0.10,]
+
+
+coldata_df$matrix_row <- match(coldata_df$column_id, colnames(keep_matrix))
+
+cols_split_by_patient <- split(coldata_df, paste(coldata_df$subject_id, coldata_df$tissue))
+
+patient_matrix <- do.call(cbind, lapply(cols_split_by_patient, function(x){
+    if(nrow(x) == 1){
+        return(keep_matrix[,x$matrix_row])
+    }
+    return(rowMeans(keep_matrix[,x$matrix_row]))
+}))
+selected_patient_matrix <- patient_matrix[module_df_no_erap2$genes,]
+
+
+patient_df <- do.call(rbind, lapply(cols_split_by_patient, function(temp_df){
+    return_df <- unique(temp_df[,!(colnames(temp_df) %in% 
+        c("X", "sample_name", "alignment_file", "alignment_file_dir",
+          "isPairedEnd", "strand_specificity", "samplesheet_path", 
+          "column_id", "sample_id", "mutation", "site_of_motor_onset",
+          "instrument", "rin", "expr", "tissue_group", "matrix_row"))])
+    if(nrow(return_df) > 1){
+        # message(paste(unique(return_df$subject_id), unique(return_df$tissue)))
+        if("N/A" %in% return_df$mnd_with_ftd & "Yes" %in% return_df$mnd_with_ftd){
+            return_df <- return_df[return_df$mnd_with_ftd == "Yes",]
+        }else if("N/A" %in% return_df$mnd_with_ftd & "No" %in% return_df$mnd_with_ftd){
+            return_df <- return_df[return_df$mnd_with_ftd == "No",]
+        }else{
+            stop(paste(return_df$subject_id, return_df$tissue))
+        }
+        # message(nrow(return_df))
+    }
+    # return_df$expr <- mean(temp_df$expr)
+    return_df$column_id <- paste(return_df$subject_id, return_df$tissue)
+    return(return_df)
+}))
+patient_df$age_at_death[patient_df$age_at_death == "90 or Older"] <- "90"
+patient_df$age_at_death <- as.numeric(patient_df$age_at_death)
+patient_df$age_at_onset <- as.numeric(patient_df$age_at_symptom_onset)
+patient_df$disease_duration <- as.numeric(patient_df$disease_duration_in_months)
+patient_df$disease_duration_in_months <- as.numeric(patient_df$disease_duration_in_months)
+
+# Select cervical patient data
+
+cervical_patient_df <- patient_df[patient_df$tissue == "Spinal_Cord_Cervical",]
+cervical_selected_matrix <- selected_patient_matrix[,cervical_patient_df$column_id]
+rownames(cervical_selected_matrix) <- module_df_no_erap2$gene_name
+cervical_erap2_matrix <- patient_matrix[erap2_module_df[erap2_module_df$gene_name == "ERAP2" & !is.na(erap2_module_df$gene_name),1],cervical_patient_df$column_id]
+
+```
+
+- Assign predictor matrix and erap2 response data
+
+```{r}
+
+X <- cervical_selected_matrix
+y <- cervical_erap2_matrix
+
+# Remove genes with no variance
+
+keep <- apply(
+    X,
+    2,
+    sd,
+    na.rm = TRUE
+) > 0
+
+X <- X[, keep, drop = FALSE]
+dim(X)
+
+```
+
+- scale values
+
+```{r}
+
+X_z <- scale(X)
+y_z <- as.numeric(scale(y))
+
+```
+
+- Fit an elastic net regression model
+
+```{r}
+
+library(glmnet)
+
+if (!file.exists(file.path(save_dir, "02-seed-file-for-glmnet-regression-models.rds"))) {
+    seed_list <- sample.int(.Machine$integer.max, 100)
+    saveRDS(object = seed_list, file = file.path(save_dir, "02-seed-file-for-glmnet-regression-models.rds"))
+} else {
+    seed_list <- readRDS(file.path(save_dir, "02-seed-file-for-glmnet-regression-models.rds"))
+}
+
+model_list <- lapply(seed_list, function(x){
+    set.seed(x)
+    cv_fit <- cv.glmnet(
+        x = t(X_z),
+        y = y_z,
+        family = "gaussian",
+        alpha = 0.5,
+        standardize = FALSE,
+        nfolds = 10,
+        keep = TRUE
+    )
+    return(cv_fit)
+})
+
+```
+
+- Identify lambda min
+
+```{r}
+
+require(matrixStats)
+# Fetch goi_pred_oof
+goi_pred_oof_list <- do.call(cbind, lapply(model_list, function(x){
+    lambda_index <- which.min(
+        abs(x$lambda - x$lambda.min)
+    )
+    goi_pred_oof <- x$fit.preval[, lambda_index]
+    goi_pred_oof
+}))
+
+goi_pred_oof <- rowMedians(goi_pred_oof_list)
+
+cor.test(
+    goi_pred_oof,
+    y_z,
+    method = "spearman"
+)
+#         Spearman's rank correlation rho
+
+# data:  goi_pred_oof and y_z
+# S = 764598, p-value = 1.178e-09
+# alternative hypothesis: true rho is not equal to 0
+# sample estimates:
+#       rho 
+# 0.4178483 
+
+cor_values <- vapply(model_list, function(x){
+    lambda_index <- which.min(
+        abs(x$lambda - x$lambda.min)
+    )
+    goi_pred_oof <- x$fit.preval[, lambda_index]
+    cor_results <- cor.test(
+        goi_pred_oof,
+        y_z,
+        method = "spearman"
+    )
+    cor_results$estimate
+},1)
+
+median(cor_values)
+# [1] 0.4022324
+
+```
+
+- Plot the correlation
+
+```{r}
+
+pdf(file = file.path(plot_dir, "11-plot-correlation-between-erap2-expression-and-predicted-expression.pdf"))
+plot(
+    y_z,
+    goi_pred_oof,
+    xlab = "Observed ERAP2 expression",
+    ylab = "Out-of-fold predicted GOI expression"
+)
+
+abline(lm(goi_pred_oof ~ y_z))
+dev.off()
+
+```
+
+- Create the final models
+
+```{r}
+
+signature_weight_list <- lapply(seq_along(seed_list), function(x){
+    set.seed(seed_list[x])
+
+    final_fit <- glmnet(
+    x = t(X_z),
+    y = y_z,
+    family = "gaussian",
+    alpha = 0.5,
+    standardize = FALSE)
+
+    coef_mat <- as.matrix(
+        coef(
+            final_fit,
+            s = cv_fit$lambda.min
+        )
+    )
+
+    signature <- data.frame(
+        gene = rownames(coef_mat),
+        beta = coef_mat[, 1]
+    )
+
+    signature <- subset(
+        signature,
+        gene != "(Intercept)" &
+        beta != 0
+    )
+
+    signature$weight <- signature$beta / sum(abs(signature$beta))
+    signature$iter <- x
+    return(signature)
+})
+signature_df <- do.call(rbind, signature_weight_list)
+signature_matrix <- reshape2::acast(data = signature_df, formula = gene ~ iter, value.var = "weight")
+signature_weights <- rowMeans(signature_matrix)
+
+```
+
+- Intersect with the scrnaseq data
+
+```{r}
+
+signature_genes_sc <- intersect(
+    names(signature_weights),
+    rownames(astro_core)
+)
+
+length(names(signature_weights))
+length(signature_genes_sc)
+
+setdiff(
+    names(signature_weights),
+    rownames(astro_core)
+)
+
+count_mat <- LayerData(
+    astro_core,
+    assay = "RNA",
+    layer = "counts"
+)
+
+detection_rate <- Matrix::rowMeans(
+    count_mat[signature_genes_sc, , drop = FALSE] > 0
+)
+
+sort(detection_rate)
+# > sort(detection_rate)
+#         STC1       IL1RL1          FGR        F13A1       S100A9     SERPINE1 
+# 0.0004257735 0.0011353960 0.0012063582 0.0019869429 0.0021998297 0.0030513767 
+#         FPR1         CD69        TGFBI         MSR1     TNFRSF1B         JAK3 
+# 0.0031933012 0.0038319614 0.0068833381 0.0076639228 0.0082316208 0.0092250923 
+#        CD163       FCGR3A        FCGBP    TNFRSF11B        ABCA6        CXCR4 
+# 0.0099347147 0.0100766392 0.0131989781 0.0179534488 0.0183082600 0.0198694295 
+#      SLC11A1         SRGN         TYMP         C1QB       SLC2A3     C11orf96 
+# 0.0216434857 0.0263269940 0.0315782004 0.0400227079 0.0568407607 0.0770650014 
+#        SBNO2         GBP2        FKBP5        SOCS3     SERPINA3       CHI3L2 
+# 0.0789100199 0.0894833948 0.1139653704 0.1176554073 0.1324155549 0.1354669316 
+#       CDKN1A        CH25H     SLC39A14        TGFB2         CCL2       CHI3L1 
+# 0.1367442521 0.1488787965 0.1661935850 0.1761992620 0.1826568266 0.1982685211 
+#        ANXA1         EMP1        CEBPD       SBSPON         BAG3      ANGPTL4 
+# 0.2112546125 0.2277178541 0.2476582458 0.2616378087 0.2653278456 0.2730627306 
+#        ACTN1         MT1X        ZFP36          ADM         YBX3         SOD2 
+# 0.2833522566 0.2873261425 0.2979704797 0.3139369855 0.3140789100 0.3152143060 
+#        VEGFA       HILPDA       IFITM3         SPP1        NAMPT           CP 
+# 0.3286971331 0.3290519444 0.3316775475 0.3731904627 0.3884473460 0.3944791371 
+#      GADD45B        DDIT4           F3         MT2A         CD44 
+# 0.3990207210 0.4424496168 0.4821884757 0.6545557763 0.7333948339 
+
+DefaultAssay(astro_core) <- "RNA"
+
+astro_core <- NormalizeData(
+    astro_core,
+    assay = "RNA",
+    normalization.method = "LogNormalize",
+    scale.factor = 10000,
+    verbose = FALSE
+)
+
+expr <- LayerData(
+    astro_core,
+    assay = "RNA",
+    layer = "data"
+)
+
+expr <- expr[
+    signature_genes_sc,
+    ,
+    drop = FALSE
+]
+expr <- as.matrix(expr)
+
+```
+
+- Scale the expression of genes across all cells
+
+```{r}
+
+expr_z <- t(
+    scale(
+        t(expr)
+    )
+)
+sum(!is.finite(expr_z))
+
+weights <- signature_weights[
+    match(
+        rownames(expr_z),
+        names(signature_weights)
+    )
+]
+weights <- weights /
+    sum(abs(weights))
+
+```
+
+- Get ERAP2 score
+
+```{r}
+
+goi_score <- as.numeric(
+    crossprod(
+        weights,
+        expr_z
+    )
+)
+astro_core$GOI_module_score <- goi_score
+
+
+```
+
+- QC of ERAP2 associated score
+
+```{r}
+
+summary(
+    astro_core$GOI_module_score
+)
+
+pdf(file = file.path(plot_dir, "12-plot-histogram-of-erap2-associated-score.pdf"))
+hist(
+    astro_core$GOI_module_score,
+    breaks = 50
+)
+dev.off()
+
+
+```
+
+- Feature plot of GOI module score
+
+```{r}
+
+pdf(file = file.path(plot_dir, "13-plot-feature-plot-of-erap2-associated-score.pdf"))
+FeaturePlot(
+    astro_core,
+    features = "GOI_module_score"
+)
+dev.off()
+
+```
+
+- Test if the ERAP2 module score is sequencing depth
+
+```{r}
+
+cor.test(
+    astro_core$GOI_module_score,
+    astro_core$nCount_RNA,
+    method = "spearman"
+)
+
+cor.test(
+    astro_core$GOI_module_score,
+    astro_core$nFeature_RNA,
+    method = "spearman"
+)
+
+
+```
+
+- Violin plot of module score on patients
+
+```{r}
+
+pdf(file = file.path(plot_dir, "14-plot-violin-plot-of-erap2-associated-score.pdf"))
+VlnPlot(
+    astro_core,
+    features = "GOI_module_score",
+    group.by = "patient_id",
+    pt.size = 0
+)
+dev.off()
+
+```
+
+- Identify patient columns
+
+```{r}
+
+meta <- astro_core[[]]
+
+grep(
+    "patient|donor|sample|subject|individual|case|orig.ident",
+    colnames(meta),
+    ignore.case = TRUE,
+    value = TRUE
+)
+
+candidate_cols <- grep(
+    "patient|donor|sample|subject|individual|case|orig.ident",
+    colnames(meta),
+    ignore.case = TRUE,
+    value = TRUE
+)
+
+data.frame(
+    variable = candidate_cols,
+    n_unique = sapply(
+        meta[, candidate_cols, drop = FALSE],
+        function(x) length(unique(x))
+    )
+)
+
+lapply(
+    meta[, candidate_cols, drop = FALSE],
+    function(x) head(unique(x), 10)
+)
+
+```
+
+- Assign sample as patient_id 
+
+```{r}
+
+astro_core$patient_id <- astro_core$sample
+
+astro_core$condition <- ifelse(
+    grepl("_ALS_", astro_core$sample),
+    "ALS",
+    "control"
+)
+
+astro_core$condition <- factor(
+    astro_core$condition,
+    levels = c("control", "ALS")
+)
+
+
+```
+
+- Aggregate astrocyte counts by patients
+
+```{r}
+
+pb <- AggregateExpression(
+    astro_core,
+    assays = "RNA",
+    group.by = "patient_id",
+    return.seurat = FALSE
+)$RNA
+
+library(edgeR)
+
+dge <- DGEList(counts = pb)
+dge <- calcNormFactors(dge)
+
+logCPM <- cpm(
+    dge,
+    log = TRUE,
+    prior.count = 1
+)
+
+sig_genes <- intersect(
+    names(signature_weights),
+    rownames(logCPM)
+)
+
+pb_sig <- logCPM[
+    sig_genes,
+    ,
+    drop = FALSE
+]
+
+
+```
+
+- Fetch relative module score
+
+```{r}
+
+pb_sig_z <- t(
+    scale(
+        t(pb_sig)
+    )
+)
+
+weights <- signature_weights[
+    match(
+        rownames(pb_sig_z),
+        names(signature_weights)
+    )
+]
+
+stopifnot(!anyNA(weights))
+
+weights <- weights / sum(abs(weights))
+
+```
+
+- Get score per patient
+
+```{r}
+
+pb_GOI_score <- as.numeric(
+    crossprod(
+        weights,
+        pb_sig_z
+    )
+)
+
+names(pb_GOI_score) <- colnames(pb_sig_z)
+
+# > pb_GOI_score
+# g29-control-cellbender-filter g32-control-cellbender-filter
+#                  -0.290070679                  -0.031641537
+# g35-control-cellbender-filter g37-control-cellbender-filter
+#                  -0.410567762                  -0.340620498
+#     g39-ALS-cellbender-filter     g40-ALS-cellbender-filter
+#                   0.006760568                   0.184261446
+#     g41-ALS-cellbender-filter     g42-ALS-cellbender-filter
+#                   0.151171241                   0.178859593
+#     g44-ALS-cellbender-filter     g45-ALS-cellbender-filter
+#                  -0.241091031                   0.205100358
+#     g46-ALS-cellbender-filter     g47-ALS-cellbender-filter
+#                   0.297387863                   0.290450439
+# > 
+
+```
+
+- Compare the scores
+
+```{r}
+
+erap2_pb <- logCPM[
+    "ERAP2",
+    names(pb_GOI_score)
+]
+
+cor.test(
+    pb_GOI_score,
+    erap2_pb,
+    method = "spearman",
+    exact = FALSE
+)
+
+
+
+```
