@@ -1,0 +1,29 @@
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - r-base=4.4
+  - r-here
+  - r-ggplot2
+  - r-stringr
+  - r-ggbeeswarm
+  - r-patchwork
+  - r-lme4
+  - r-emmeans
+  - r-survival
+  - r-survminer
+  - r-randomforestsrc
+  - r-matrixstats
+  - r-reshape2
+  - bioconductor-dep
+  - bioconductor-pcatools
+  - bioconductor-summarizedexperiment
+  - bioconductor-fgsea
+  - r-seurat>=5
+  - r-viridis
+  - r-dplyr
+  - r-tidyr
+  - r-broom
+  - bioconductor-rtracklayer
+  - r-knitr

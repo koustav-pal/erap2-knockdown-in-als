@@ -1,0 +1,268 @@
+configfile: "workflow/config/config.yaml"
+
+import json
+from pathlib import Path
+
+STEPS = json.loads(Path("workflow/config/steps.json").read_text())
+DATA = config["data_root"]
+RESULTS = config["results_root"]
+RSCRIPT = config["rscript"]
+ALL_OUTPUTS = [f"{RESULTS}/{s['id']}/{o}" for s in STEPS for o in s["outputs"]]
+
+rule all:
+    default_target: True
+    input:
+        ALL_OUTPUTS
+
+rule step_01_proteomics_pca:
+    input:
+        data=[f"{DATA}/proteomics_matrix.tsv", f"{DATA}/proteomics_annotation.csv", f"{DATA}/proteomics_gene_mapping.rds"],
+        code="workflow/scripts/01_proteomics_pca.R",
+        common="workflow/scripts/common.R",
+        spec="workflow/config/steps.json"
+    output:
+        artifacts=[f"{RESULTS}/01_proteomics_pca/04-plot-PCA.pdf"],
+        session=f"{RESULTS}/01_proteomics_pca/sessionInfo.txt"
+    conda:
+        "envs/analysis.yaml"
+    threads: 1
+    log:
+        f"{RESULTS}/logs/01_proteomics_pca.log"
+    params:
+        stage="01_proteomics_pca",
+        data=DATA,
+        out=f"{RESULTS}/01_proteomics_pca",
+        rscript=RSCRIPT
+    shell:
+        "{params.rscript:q} --vanilla {input.code:q} {params.data:q} {params.out:q} > {log:q} 2>&1"
+
+rule step_02_protein_frequency:
+    input:
+        previous=[f"{RESULTS}/01_proteomics_pca/04-plot-PCA.pdf"],
+        data=[f"{DATA}/significant_proteins.rds"],
+        code="workflow/scripts/02_protein_frequency.R",
+        common="workflow/scripts/common.R",
+        spec="workflow/config/steps.json"
+    output:
+        artifacts=[f"{RESULTS}/02_protein_frequency/02-06-frequency-of-differential-protein-enrichment.pdf"],
+        session=f"{RESULTS}/02_protein_frequency/sessionInfo.txt"
+    conda:
+        "envs/analysis.yaml"
+    threads: 1
+    log:
+        f"{RESULTS}/logs/02_protein_frequency.log"
+    params:
+        stage="02_protein_frequency",
+        data=DATA,
+        out=f"{RESULTS}/02_protein_frequency",
+        rscript=RSCRIPT
+    shell:
+        "{params.rscript:q} --vanilla {input.code:q} {params.data:q} {params.out:q} > {log:q} 2>&1"
+
+rule step_03_protein_rescue:
+    input:
+        previous=[f"{RESULTS}/02_protein_frequency/02-06-frequency-of-differential-protein-enrichment.pdf"],
+        data=[f"{DATA}/pairwise_proteins.rds", f"{DATA}/protein_background.csv"],
+        code="workflow/scripts/03_protein_rescue.R",
+        common="workflow/scripts/common.R",
+        spec="workflow/config/steps.json"
+    output:
+        artifacts=[f"{RESULTS}/03_protein_rescue/03-05-plot-vcp-vs-control-versus-effect-of-erap2-kd-in-vcp.pdf"],
+        session=f"{RESULTS}/03_protein_rescue/sessionInfo.txt"
+    conda:
+        "envs/analysis.yaml"
+    threads: 1
+    log:
+        f"{RESULTS}/logs/03_protein_rescue.log"
+    params:
+        stage="03_protein_rescue",
+        data=DATA,
+        out=f"{RESULTS}/03_protein_rescue",
+        rscript=RSCRIPT
+    shell:
+        "{params.rscript:q} --vanilla {input.code:q} {params.data:q} {params.out:q} > {log:q} 2>&1"
+
+rule step_04_protein_go:
+    input:
+        previous=[f"{RESULTS}/03_protein_rescue/03-05-plot-vcp-vs-control-versus-effect-of-erap2-kd-in-vcp.pdf"],
+        data=[f"{DATA}/protein_go_annotated.csv", f"{DATA}/pairwise_go_annotated.csv"],
+        code="workflow/scripts/04_protein_go.R",
+        common="workflow/scripts/common.R",
+        spec="workflow/config/steps.json"
+    output:
+        artifacts=[f"{RESULTS}/04_protein_go/03-04-plot-gene-set-enrichment-using-gobp.pdf", f"{RESULTS}/04_protein_go/03-05-plot-gene-set-enrichment-using-gobp-for-ameliorated-and-abrogated-proteins.pdf", f"{RESULTS}/04_protein_go/Figure_1D.pdf", f"{RESULTS}/04_protein_go/Figure_1E.pdf", f"{RESULTS}/04_protein_go/Figure_S2C_down.pdf", f"{RESULTS}/04_protein_go/Figure_S2C_up.pdf"],
+        session=f"{RESULTS}/04_protein_go/sessionInfo.txt"
+    conda:
+        "envs/analysis.yaml"
+    threads: 1
+    log:
+        f"{RESULTS}/logs/04_protein_go.log"
+    params:
+        stage="04_protein_go",
+        data=DATA,
+        out=f"{RESULTS}/04_protein_go",
+        rscript=RSCRIPT
+    shell:
+        "{params.rscript:q} --vanilla {input.code:q} {params.data:q} {params.out:q} > {log:q} 2>&1"
+
+rule step_05_protein_gsea:
+    input:
+        previous=[f"{RESULTS}/04_protein_go/03-04-plot-gene-set-enrichment-using-gobp.pdf", f"{RESULTS}/04_protein_go/03-05-plot-gene-set-enrichment-using-gobp-for-ameliorated-and-abrogated-proteins.pdf", f"{RESULTS}/04_protein_go/Figure_1D.pdf", f"{RESULTS}/04_protein_go/Figure_1E.pdf", f"{RESULTS}/04_protein_go/Figure_S2C_down.pdf", f"{RESULTS}/04_protein_go/Figure_S2C_up.pdf"],
+        data=[f"{DATA}/protein_background.csv", f"{DATA}/GO_Biological_Process_2023.txt"],
+        code="workflow/scripts/05_protein_gsea.R",
+        common="workflow/scripts/common.R",
+        spec="workflow/config/steps.json"
+    output:
+        artifacts=[f"{RESULTS}/05_protein_gsea/01-03-plot-scatterplot-of-gsea-nes-scores-for-proteins.pdf", f"{RESULTS}/05_protein_gsea/gsea_NES.csv"],
+        session=f"{RESULTS}/05_protein_gsea/sessionInfo.txt"
+    conda:
+        "envs/analysis.yaml"
+    threads: 1
+    log:
+        f"{RESULTS}/logs/05_protein_gsea.log"
+    params:
+        stage="05_protein_gsea",
+        data=DATA,
+        out=f"{RESULTS}/05_protein_gsea",
+        rscript=RSCRIPT
+    shell:
+        "{params.rscript:q} --vanilla {input.code:q} {params.data:q} {params.out:q} > {log:q} 2>&1"
+
+rule step_06_protein_string:
+    input:
+        previous=[f"{RESULTS}/05_protein_gsea/01-03-plot-scatterplot-of-gsea-nes-scores-for-proteins.pdf", f"{RESULTS}/05_protein_gsea/gsea_NES.csv"],
+        data="workflow/resources/protein_string_grouped.csv",
+        code="workflow/scripts/06_protein_string.R",
+        common="workflow/scripts/common.R",
+        spec="workflow/config/steps.json"
+    output:
+        artifacts=[f"{RESULTS}/06_protein_string/03-06-plot-enriched-compartments-from-STRING.pdf", f"{RESULTS}/06_protein_string/03-07-plot-enriched-keywords-from-STRING.pdf"],
+        session=f"{RESULTS}/06_protein_string/sessionInfo.txt"
+    conda:
+        "envs/analysis.yaml"
+    threads: 1
+    log:
+        f"{RESULTS}/logs/06_protein_string.log"
+    params:
+        stage="06_protein_string",
+        data=DATA,
+        out=f"{RESULTS}/06_protein_string",
+        rscript=RSCRIPT
+    shell:
+        "{params.rscript:q} --vanilla {input.code:q} {params.data:q} {params.out:q} > {log:q} 2>&1"
+
+rule step_07_bodipy:
+    input:
+        previous=[f"{RESULTS}/06_protein_string/03-06-plot-enriched-compartments-from-STRING.pdf", f"{RESULTS}/06_protein_string/03-07-plot-enriched-keywords-from-STRING.pdf"],
+        data=[f"{DATA}/bodipy_cell_metrics.rds"],
+        code="workflow/scripts/07_bodipy.R",
+        common="workflow/scripts/common.R",
+        spec="workflow/config/steps.json"
+    output:
+        artifacts=[f"{RESULTS}/07_bodipy/07-01-plot-covariate-adjusted-mean-spot-size-per-cell.pdf", f"{RESULTS}/07_bodipy/treatment_contrasts.csv", f"{RESULTS}/07_bodipy/bodipy_lmer.rds"],
+        session=f"{RESULTS}/07_bodipy/sessionInfo.txt"
+    conda:
+        "envs/analysis.yaml"
+    threads: 1
+    log:
+        f"{RESULTS}/logs/07_bodipy.log"
+    params:
+        stage="07_bodipy",
+        data=DATA,
+        out=f"{RESULTS}/07_bodipy",
+        rscript=RSCRIPT
+    shell:
+        "{params.rscript:q} --vanilla {input.code:q} {params.data:q} {params.out:q} > {log:q} 2>&1"
+
+rule step_08_bulk_expression:
+    input:
+        previous=[f"{RESULTS}/07_bodipy/07-01-plot-covariate-adjusted-mean-spot-size-per-cell.pdf", f"{RESULTS}/07_bodipy/treatment_contrasts.csv", f"{RESULTS}/07_bodipy/bodipy_lmer.rds"],
+        data=[f"{DATA}/patient_expression.rds"],
+        code="workflow/scripts/08_bulk_expression.R",
+        common="workflow/scripts/common.R",
+        spec="workflow/config/steps.json"
+    output:
+        artifacts=[f"{RESULTS}/08_bulk_expression/01-01-plot-expression-zscore-of-erap2-expression-tpm.pdf", f"{RESULTS}/08_bulk_expression/01-02-plot-expression-zscore-of-erap2-expression-tpm-stratified-by-genotypic-sex.pdf", f"{RESULTS}/08_bulk_expression/01-02-plot-CDF-of-erap2-expression-in-tissues.pdf"],
+        session=f"{RESULTS}/08_bulk_expression/sessionInfo.txt"
+    conda:
+        "envs/analysis.yaml"
+    threads: 1
+    log:
+        f"{RESULTS}/logs/08_bulk_expression.log"
+    params:
+        stage="08_bulk_expression",
+        data=DATA,
+        out=f"{RESULTS}/08_bulk_expression",
+        rscript=RSCRIPT
+    shell:
+        "{params.rscript:q} --vanilla {input.code:q} {params.data:q} {params.out:q} > {log:q} 2>&1"
+
+rule step_09_bulk_module:
+    input:
+        previous=[f"{RESULTS}/08_bulk_expression/01-01-plot-expression-zscore-of-erap2-expression-tpm.pdf", f"{RESULTS}/08_bulk_expression/01-02-plot-expression-zscore-of-erap2-expression-tpm-stratified-by-genotypic-sex.pdf", f"{RESULTS}/08_bulk_expression/01-02-plot-CDF-of-erap2-expression-in-tissues.pdf"],
+        data=[f"{DATA}/bulk_modules.rds", f"{DATA}/bulk_module_go_annotated.csv"],
+        code="workflow/scripts/09_bulk_module.R",
+        common="workflow/scripts/common.R",
+        spec="workflow/config/steps.json"
+    output:
+        artifacts=[f"{RESULTS}/09_bulk_module/Figure_3C.pdf", f"{RESULTS}/09_bulk_module/Figure_3C_terms.csv", f"{RESULTS}/09_bulk_module/ERAP2_module.txt"],
+        session=f"{RESULTS}/09_bulk_module/sessionInfo.txt"
+    conda:
+        "envs/analysis.yaml"
+    threads: 1
+    log:
+        f"{RESULTS}/logs/09_bulk_module.log"
+    params:
+        stage="09_bulk_module",
+        data=DATA,
+        out=f"{RESULTS}/09_bulk_module",
+        rscript=RSCRIPT
+    shell:
+        "{params.rscript:q} --vanilla {input.code:q} {params.data:q} {params.out:q} > {log:q} 2>&1"
+
+rule step_10_survival:
+    input:
+        previous=[f"{RESULTS}/09_bulk_module/Figure_3C.pdf", f"{RESULTS}/09_bulk_module/Figure_3C_terms.csv", f"{RESULTS}/09_bulk_module/ERAP2_module.txt"],
+        data=[f"{DATA}/patient_expression.rds", f"{DATA}/patient_mutations.rds", f"{DATA}/rsf_seeds.rds"],
+        code="workflow/scripts/10_survival.R",
+        common="workflow/scripts/common.R",
+        spec="workflow/config/steps.json"
+    output:
+        artifacts=[f"{RESULTS}/10_survival/Figure_3D_cervical.pdf", f"{RESULTS}/10_survival/Figure_3D_lumbar.pdf", f"{RESULTS}/10_survival/Figure_S6_cervical_importance.pdf", f"{RESULTS}/10_survival/Figure_S6_lumbar_importance.pdf", f"{RESULTS}/10_survival/risk_stratification.rds", f"{RESULTS}/10_survival/variable_importance.csv"],
+        session=f"{RESULTS}/10_survival/sessionInfo.txt"
+    conda:
+        "envs/analysis.yaml"
+    threads: 1
+    log:
+        f"{RESULTS}/logs/10_survival.log"
+    params:
+        stage="10_survival",
+        data=DATA,
+        out=f"{RESULTS}/10_survival",
+        rscript=RSCRIPT
+    shell:
+        "{params.rscript:q} --vanilla {input.code:q} {params.data:q} {params.out:q} > {log:q} 2>&1"
+
+rule step_11_single_cell:
+    input:
+        previous=[f"{RESULTS}/10_survival/Figure_3D_cervical.pdf", f"{RESULTS}/10_survival/Figure_3D_lumbar.pdf", f"{RESULTS}/10_survival/Figure_S6_cervical_importance.pdf", f"{RESULTS}/10_survival/Figure_S6_lumbar_importance.pdf", f"{RESULTS}/10_survival/risk_stratification.rds", f"{RESULTS}/10_survival/variable_importance.csv"],
+        data=[f"{DATA}/annotated_cells.rds", f"{DATA}/genes.gtf", f"{DATA}/bulk_counts.rds", f"{DATA}/bulk_modules.rds"],
+        code="workflow/scripts/11_single_cell.R",
+        common="workflow/scripts/common.R",
+        spec="workflow/config/steps.json"
+    output:
+        artifacts=[f"{RESULTS}/11_single_cell/20-03-plot-unsupervised-clusters-from-seurat-with-cleaned-up-reference-annotation.pdf", f"{RESULTS}/11_single_cell/20-01-plot-frequency-of-predicted-cell-types.pdf", f"{RESULTS}/11_single_cell/20-06-plot-interaction-effect-between-ERAP2-and-condition-in-cleaned-up-reference-annotation.pdf", f"{RESULTS}/11_single_cell/20-07-plot-enrichment-of-ERAP2-expressing-cells-cleaned-up-reference-annotation.pdf", f"{RESULTS}/11_single_cell/20-08-plot-odds-ratio-of-ERAP2-expressing-cells-cleaned-up-reference-annotation.pdf", f"{RESULTS}/11_single_cell/20-09-plot-module-score-of-ERAP2-module-M3-in-scrnaseq-data.pdf"],
+        session=f"{RESULTS}/11_single_cell/sessionInfo.txt"
+    conda:
+        "envs/analysis.yaml"
+    threads: 1
+    log:
+        f"{RESULTS}/logs/11_single_cell.log"
+    params:
+        stage="11_single_cell",
+        data=DATA,
+        out=f"{RESULTS}/11_single_cell",
+        rscript=RSCRIPT
+    shell:
+        "{params.rscript:q} --vanilla {input.code:q} {params.data:q} {params.out:q} > {log:q} 2>&1"
+

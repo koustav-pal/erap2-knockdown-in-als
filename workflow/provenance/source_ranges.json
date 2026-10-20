@@ -1,0 +1,164 @@
+[
+  {
+    "path": "analysis/14-erap2-kd-proteomics/scripts/02-01-plot-pca-with-pcatools.R",
+    "start": 35,
+    "end": 87,
+    "sha256": "458b5f334d866e661fb48bf373d46533449552c81e4d2800a4bcc5e626efbfc6"
+  },
+  {
+    "path": "analysis/14-erap2-kd-proteomics/scripts/02-01-plot-pca-with-pcatools.R",
+    "start": 93,
+    "end": 154,
+    "sha256": "458b5f334d866e661fb48bf373d46533449552c81e4d2800a4bcc5e626efbfc6"
+  },
+  {
+    "path": "analysis/14-erap2-kd-proteomics/markdowns/01-do-some-exploratory-analysis-and-save-significantly-affected-proteins.rmd",
+    "start": 274,
+    "end": 313,
+    "sha256": "12ed14741819a655d19dcfa60a4f4c326c4943ab1b47a0297e5ef43710382aad"
+  },
+  {
+    "path": "analysis/14-erap2-kd-proteomics/markdowns/05-plot-ameliorated-and-abrogated-targets-from-erap2-kd.rmd",
+    "start": 93,
+    "end": 147,
+    "sha256": "01387767b072412e9975080ca8661df540d2a6fd409a3ee7be8cb7401e57aa1f"
+  },
+  {
+    "path": "analysis/14-erap2-kd-proteomics/markdowns/04-perform-gene-set-enrichment-with-enrichr.rmd",
+    "start": 133,
+    "end": 197,
+    "sha256": "bd965d9476750fbc0ee9a1bcc1b7efb0e22c37aaa51da88d398aebc857841b97"
+  },
+  {
+    "path": "analysis/14-erap2-kd-proteomics/markdowns/05-plot-ameliorated-and-abrogated-targets-from-erap2-kd.rmd",
+    "start": 211,
+    "end": 311,
+    "sha256": "01387767b072412e9975080ca8661df540d2a6fd409a3ee7be8cb7401e57aa1f"
+  },
+  {
+    "path": "analysis/16-integrate-rnaseq-and-proteomics/scripts/01-03-plot-scatterplot-of-gsea-nes-scores.R",
+    "start": 28,
+    "end": 37,
+    "sha256": "e2c8d09908ef5faa29626a6a741f2e7ed8e56ea1de7cfb4f25430387a6059982"
+  },
+  {
+    "path": "analysis/16-integrate-rnaseq-and-proteomics/scripts/01-03-plot-scatterplot-of-gsea-nes-scores.R",
+    "start": 47,
+    "end": 122,
+    "sha256": "e2c8d09908ef5faa29626a6a741f2e7ed8e56ea1de7cfb4f25430387a6059982"
+  },
+  {
+    "path": "analysis/16-integrate-rnaseq-and-proteomics/scripts/01-03-plot-scatterplot-of-gsea-nes-scores.R",
+    "start": 127,
+    "end": 134,
+    "sha256": "e2c8d09908ef5faa29626a6a741f2e7ed8e56ea1de7cfb4f25430387a6059982"
+  },
+  {
+    "path": "analysis/14-erap2-kd-proteomics/markdowns/06-plot-enriched-compartments-from-string.rmd",
+    "start": 154,
+    "end": 195,
+    "sha256": "edc0173b70ebf433d3845b01d71bc570e24f029e736f6efd217482b53e1de6d9"
+  },
+  {
+    "path": "analysis/14-erap2-kd-proteomics/markdowns/06-plot-enriched-compartments-from-string.rmd",
+    "start": 205,
+    "end": 237,
+    "sha256": "edc0173b70ebf433d3845b01d71bc570e24f029e736f6efd217482b53e1de6d9"
+  },
+  {
+    "path": "analysis/99-01-bodipy-erap2-kd/scripts/hierarchical-modelling-of-spots.r",
+    "start": 24,
+    "end": 133,
+    "sha256": "3cd08b66fd448b822bbc1ba9375f47909fa5e24b0259d26abd25ba9a3d4eadb2"
+  },
+  {
+    "path": "analysis/99-01-bodipy-erap2-kd/scripts/hierarchical-modelling-of-spots.r",
+    "start": 161,
+    "end": 197,
+    "sha256": "3cd08b66fd448b822bbc1ba9375f47909fa5e24b0259d26abd25ba9a3d4eadb2"
+  },
+  {
+    "path": "analysis/11-postmortem-data-analysis/markdowns/02-plot-erap2-expression-levels.rmd",
+    "start": 67,
+    "end": 74,
+    "sha256": "1658d75c601b77475d6d9b8778e6d27508f6b969c24ad773b0e47171d2956027"
+  },
+  {
+    "path": "analysis/11-postmortem-data-analysis/markdowns/02-plot-erap2-expression-levels.rmd",
+    "start": 128,
+    "end": 268,
+    "sha256": "1658d75c601b77475d6d9b8778e6d27508f6b969c24ad773b0e47171d2956027"
+  },
+  {
+    "path": "analysis/11-postmortem-data-analysis/scripts/02-plot-erap2-expression-levels.R",
+    "start": 184,
+    "end": 244,
+    "sha256": "582cd127fedd0c8a6dabbed611071d1f3de3a3c609254c45d5faff7de514eb04"
+  },
+  {
+    "path": "analysis/18-screening-for-erap2-mutations-in-postmortem/scripts/06-perform-ranfom-survival-analysis-using-disease-duration-and-covariates.R",
+    "start": 44,
+    "end": 86,
+    "sha256": "540e611ac2ed66482a2aa26c4a44be7feabf2076ddc31c9a2b23fd323c721de5"
+  },
+  {
+    "path": "analysis/18-screening-for-erap2-mutations-in-postmortem/scripts/06-perform-ranfom-survival-analysis-using-disease-duration-and-covariates.R",
+    "start": 88,
+    "end": 108,
+    "sha256": "540e611ac2ed66482a2aa26c4a44be7feabf2076ddc31c9a2b23fd323c721de5"
+  },
+  {
+    "path": "analysis/18-screening-for-erap2-mutations-in-postmortem/scripts/06-perform-ranfom-survival-analysis-using-disease-duration-and-covariates.R",
+    "start": 121,
+    "end": 121,
+    "sha256": "540e611ac2ed66482a2aa26c4a44be7feabf2076ddc31c9a2b23fd323c721de5"
+  },
+  {
+    "path": "analysis/22-scrnaseq-data-analysis/scripts/03-score-patients-on-the-basis-of-erap2-module.rmd",
+    "start": 82,
+    "end": 125,
+    "sha256": "679626e77abc2bfb8a4b60e385055001b58e6079f87bca487e68b8ddb97d558c"
+  },
+  {
+    "path": "analysis/22-scrnaseq-data-analysis/scripts/03-score-patients-on-the-basis-of-erap2-module.rmd",
+    "start": 250,
+    "end": 330,
+    "sha256": "679626e77abc2bfb8a4b60e385055001b58e6079f87bca487e68b8ddb97d558c"
+  },
+  {
+    "path": "analysis/22-scrnaseq-data-analysis/scripts/03-score-patients-on-the-basis-of-erap2-module.rmd",
+    "start": 131,
+    "end": 193,
+    "sha256": "679626e77abc2bfb8a4b60e385055001b58e6079f87bca487e68b8ddb97d558c"
+  },
+  {
+    "path": "analysis/22-scrnaseq-data-analysis/scripts/03-score-patients-on-the-basis-of-erap2-module.rmd",
+    "start": 346,
+    "end": 372,
+    "sha256": "679626e77abc2bfb8a4b60e385055001b58e6079f87bca487e68b8ddb97d558c"
+  },
+  {
+    "path": "analysis/22-scrnaseq-data-analysis/scripts/03-score-patients-on-the-basis-of-erap2-module.rmd",
+    "start": 498,
+    "end": 628,
+    "sha256": "679626e77abc2bfb8a4b60e385055001b58e6079f87bca487e68b8ddb97d558c"
+  },
+  {
+    "path": "analysis/22-scrnaseq-data-analysis/scripts/03-score-patients-on-the-basis-of-erap2-module.rmd",
+    "start": 636,
+    "end": 859,
+    "sha256": "679626e77abc2bfb8a4b60e385055001b58e6079f87bca487e68b8ddb97d558c"
+  },
+  {
+    "path": "analysis/22-scrnaseq-data-analysis/scripts/03-score-patients-on-the-basis-of-erap2-module.rmd",
+    "start": 948,
+    "end": 1276,
+    "sha256": "679626e77abc2bfb8a4b60e385055001b58e6079f87bca487e68b8ddb97d558c"
+  },
+  {
+    "path": "analysis/22-scrnaseq-data-analysis/scripts/03-score-patients-on-the-basis-of-erap2-module.rmd",
+    "start": 1284,
+    "end": 1359,
+    "sha256": "679626e77abc2bfb8a4b60e385055001b58e6079f87bca487e68b8ddb97d558c"
+  }
+]

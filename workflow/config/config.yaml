@@ -1,0 +1,4 @@
+# Paths relative to repository root. Override with --config or --configfile.
+data_root: workflow/data
+results_root: workflow/results
+rscript: Rscript

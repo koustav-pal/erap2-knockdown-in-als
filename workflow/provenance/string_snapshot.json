@@ -1,0 +1,27 @@
+{
+  "api": "https://version-11-5.string-db.org/api/tsv",
+  "date": "2026-10-20",
+  "species": 9606,
+  "methods": [
+    "get_string_ids",
+    "enrichment"
+  ],
+  "filter": "fdr < 0.05",
+  "group_source": "02-04-pairwise-grouped-significantly-affected-proteins.rds filtered on vcp_ctrl_vs_ctrl_ctrl_sig",
+  "input_sizes": {
+    "down->up": 735,
+    "down->down": 340,
+    "up->down": 61,
+    "up->up": 18
+  },
+  "mapped_sizes": {
+    "down->up": 725,
+    "down->down": 339,
+    "up->down": 61,
+    "up->up": 18
+  },
+  "output": "workflow/resources/protein_string_grouped.csv",
+  "sha256": "07fcbbf5166b5c4ea2fb1672452f887513b1b9cc01d4426dd3270ad807816943",
+  "note": "Existing project CSV lacks direction_group. Snapshot recreated with original protein groups; not claimed identical to historical manuscript results.",
+  "documentation": "https://string-db.org/help/api/"
+}

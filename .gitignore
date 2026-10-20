@@ -43,16 +43,24 @@ input_files/
 /analysis/19-investigating-the-spliceosomal-complexes/
 /analysis/20-investigating-PPAR-signalling-ERAP2-KD/
 /analysis/2023-03-31-09-STRINGdb-protein-interaction-enrichment-upregulated-genes.pdf
-/analysis/99-01-bodipy-erap2-kd
+/analysis/99-01-bodipy-erap2-kd/*
+!/analysis/99-01-bodipy-erap2-kd/scripts/
 /analysis/ASpli_binFeatures.log
 /analysis/core.101096
 /analysis/core.22907
 /analysis/core.67894
 /analysis/Rplots.pdf
-/analysis/src/
+/analysis/src/*
+!/analysis/src/bodipy_cdfs/
 .DS_Store
 
 # Local dispatch state and runtime logs
 /.cluster_dispatch/
 .nextflow.log*
 /rm_files.txt
+
+# Reproducibility workflow: large inputs and generated artifacts
+/workflow/data/
+/workflow/results/
+/.snakemake/
+__pycache__/

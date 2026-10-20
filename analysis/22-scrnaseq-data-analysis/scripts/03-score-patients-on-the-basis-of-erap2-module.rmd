@@ -470,7 +470,7 @@ erap2_summary <- erap2_expr |>
     arrange(desc(mean_expression))
 
 erap2_summary
-> erap2_summary
+# > erap2_summary
 # # A tibble: 8 × 6
 #   cluster_cell_type n_cells mean_expression median_expression n_ERAP2_positive
 #   <fct>               <int>           <dbl>             <dbl>            <int>

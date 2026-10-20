@@ -1,0 +1,202 @@
+[
+  {
+    "id": "01_proteomics_pca",
+    "script": "workflow/scripts/01_proteomics_pca.R",
+    "inputs": [
+      "proteomics_matrix.tsv",
+      "proteomics_annotation.csv",
+      "proteomics_gene_mapping.rds"
+    ],
+    "outputs": [
+      "04-plot-PCA.pdf"
+    ],
+    "panels": [
+      "1A"
+    ],
+    "env": "analysis"
+  },
+  {
+    "id": "02_protein_frequency",
+    "script": "workflow/scripts/02_protein_frequency.R",
+    "inputs": [
+      "significant_proteins.rds"
+    ],
+    "outputs": [
+      "02-06-frequency-of-differential-protein-enrichment.pdf"
+    ],
+    "panels": [
+      "1B"
+    ],
+    "env": "analysis"
+  },
+  {
+    "id": "03_protein_rescue",
+    "script": "workflow/scripts/03_protein_rescue.R",
+    "inputs": [
+      "pairwise_proteins.rds",
+      "protein_background.csv"
+    ],
+    "outputs": [
+      "03-05-plot-vcp-vs-control-versus-effect-of-erap2-kd-in-vcp.pdf"
+    ],
+    "panels": [
+      "1C"
+    ],
+    "env": "analysis"
+  },
+  {
+    "id": "04_protein_go",
+    "script": "workflow/scripts/04_protein_go.R",
+    "inputs": [
+      "protein_go_annotated.csv",
+      "pairwise_go_annotated.csv"
+    ],
+    "outputs": [
+      "03-04-plot-gene-set-enrichment-using-gobp.pdf",
+      "03-05-plot-gene-set-enrichment-using-gobp-for-ameliorated-and-abrogated-proteins.pdf",
+      "Figure_1D.pdf",
+      "Figure_1E.pdf",
+      "Figure_S2C_down.pdf",
+      "Figure_S2C_up.pdf"
+    ],
+    "panels": [
+      "1D",
+      "1E",
+      "S2A",
+      "S2C"
+    ],
+    "env": "analysis"
+  },
+  {
+    "id": "05_protein_gsea",
+    "script": "workflow/scripts/05_protein_gsea.R",
+    "inputs": [
+      "protein_background.csv",
+      "GO_Biological_Process_2023.txt"
+    ],
+    "outputs": [
+      "01-03-plot-scatterplot-of-gsea-nes-scores-for-proteins.pdf",
+      "gsea_NES.csv"
+    ],
+    "panels": [
+      "S2B"
+    ],
+    "env": "analysis"
+  },
+  {
+    "id": "06_protein_string",
+    "script": "workflow/scripts/06_protein_string.R",
+    "inputs": [],
+    "outputs": [
+      "03-06-plot-enriched-compartments-from-STRING.pdf",
+      "03-07-plot-enriched-keywords-from-STRING.pdf"
+    ],
+    "panels": [
+      "S2D",
+      "S2E"
+    ],
+    "env": "analysis"
+  },
+  {
+    "id": "07_bodipy",
+    "script": "workflow/scripts/07_bodipy.R",
+    "inputs": [
+      "bodipy_cell_metrics.rds"
+    ],
+    "outputs": [
+      "07-01-plot-covariate-adjusted-mean-spot-size-per-cell.pdf",
+      "treatment_contrasts.csv",
+      "bodipy_lmer.rds"
+    ],
+    "panels": [
+      "S5C"
+    ],
+    "env": "analysis"
+  },
+  {
+    "id": "08_bulk_expression",
+    "script": "workflow/scripts/08_bulk_expression.R",
+    "inputs": [
+      "patient_expression.rds"
+    ],
+    "outputs": [
+      "01-01-plot-expression-zscore-of-erap2-expression-tpm.pdf",
+      "01-02-plot-expression-zscore-of-erap2-expression-tpm-stratified-by-genotypic-sex.pdf",
+      "01-02-plot-CDF-of-erap2-expression-in-tissues.pdf"
+    ],
+    "panels": [
+      "3B",
+      "S6A",
+      "S6B",
+      "S6C"
+    ],
+    "env": "analysis"
+  },
+  {
+    "id": "09_bulk_module",
+    "script": "workflow/scripts/09_bulk_module.R",
+    "inputs": [
+      "bulk_modules.rds",
+      "bulk_module_go_annotated.csv"
+    ],
+    "outputs": [
+      "Figure_3C.pdf",
+      "Figure_3C_terms.csv",
+      "ERAP2_module.txt"
+    ],
+    "panels": [
+      "3C"
+    ],
+    "env": "analysis"
+  },
+  {
+    "id": "10_survival",
+    "script": "workflow/scripts/10_survival.R",
+    "inputs": [
+      "patient_expression.rds",
+      "patient_mutations.rds",
+      "rsf_seeds.rds"
+    ],
+    "outputs": [
+      "Figure_3D_cervical.pdf",
+      "Figure_3D_lumbar.pdf",
+      "Figure_S6_cervical_importance.pdf",
+      "Figure_S6_lumbar_importance.pdf",
+      "risk_stratification.rds",
+      "variable_importance.csv"
+    ],
+    "panels": [
+      "3D",
+      "S6D",
+      "S6E"
+    ],
+    "env": "analysis"
+  },
+  {
+    "id": "11_single_cell",
+    "script": "workflow/scripts/11_single_cell.R",
+    "inputs": [
+      "annotated_cells.rds",
+      "genes.gtf",
+      "bulk_counts.rds",
+      "bulk_modules.rds"
+    ],
+    "outputs": [
+      "20-03-plot-unsupervised-clusters-from-seurat-with-cleaned-up-reference-annotation.pdf",
+      "20-01-plot-frequency-of-predicted-cell-types.pdf",
+      "20-06-plot-interaction-effect-between-ERAP2-and-condition-in-cleaned-up-reference-annotation.pdf",
+      "20-07-plot-enrichment-of-ERAP2-expressing-cells-cleaned-up-reference-annotation.pdf",
+      "20-08-plot-odds-ratio-of-ERAP2-expressing-cells-cleaned-up-reference-annotation.pdf",
+      "20-09-plot-module-score-of-ERAP2-module-M3-in-scrnaseq-data.pdf"
+    ],
+    "panels": [
+      "S7A",
+      "S7B",
+      "S7C",
+      "S7D",
+      "S7E",
+      "S7F"
+    ],
+    "env": "analysis"
+  }
+]

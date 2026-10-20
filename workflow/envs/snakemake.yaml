@@ -1,0 +1,6 @@
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - snakemake-minimal=9.16.3
+  - python=3.11
