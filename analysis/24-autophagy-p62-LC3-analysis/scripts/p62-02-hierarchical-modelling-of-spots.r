@@ -440,7 +440,7 @@ models_v1_poisson <- list(
     evaluation = models_v1_poisson
 )
 
-# saveRDS(models_v1_nbd, file.path(analysis_save_dir, "p62", "models-v1-all-nbd2.rds"))
+# saveRDS(models_v1_nbd2, file.path(analysis_save_dir, "p62", "models-v1-all-nbd2.rds"))
 # saveRDS(models_v1_genpois, file.path(analysis_save_dir, "p62", "models-v1-all-genpois.rds"))
 # saveRDS(models_v1_poisson, file.path(analysis_save_dir, "p62", "models-v1-all-poisson.rds"))
 
